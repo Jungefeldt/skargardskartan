@@ -56,7 +56,9 @@ input[type=range]{width:100%;accent-color:var(--accent);height:30px;margin:2px 0
 .toast.show{opacity:1}
 .arrow{pointer-events:none}
 .arrow svg{display:block;margin:0 auto}
-.arrow span{display:block;text-align:center;font:700 12px system-ui,sans-serif;color:#14222B;text-shadow:0 0 2px #fff,0 0 3px #fff,0 0 4px #fff;margin-top:-2px;white-space:nowrap}
+.arrow svg{filter:drop-shadow(0 1px 2px rgba(0,0,0,.45))}
+.arrow span{display:table;margin:-1px auto 0;text-align:center;background:rgba(255,255,255,.94);border:2px solid #14222B;border-radius:9px;padding:1px 6px 2px;color:#14222B;white-space:nowrap;line-height:1.15;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.arrow span b{display:block;font:800 12px system-ui,sans-serif}
 .tlbl{font:italic 600 13px Georgia,"Times New Roman",serif;color:#14222B;text-shadow:0 0 2px #fff,0 0 3px #fff,0 0 4px #fff;white-space:nowrap;transform:translate(-50%,-50%);pointer-events:none}
 .me{width:16px;height:16px;border-radius:50%;background:#1F6F9A;border:3px solid #fff;box-shadow:0 0 0 2px rgba(31,111,154,.35)}
 .overlay{pointer-events:none}
@@ -73,6 +75,8 @@ input[type=range]{width:100%;accent-color:var(--accent);height:30px;margin:2px 0
 .deftab th{color:var(--muted);font-weight:500}
 .deftab i{display:inline-block;width:14px;height:10px;border-radius:3px;border:1px solid rgba(0,0,0,.2);margin-right:6px;vertical-align:-1px}
 .warn{background:rgba(228,110,52,.14);border-left:3px solid #E46E34;padding:6px 8px;border-radius:6px;font-size:13px;margin-top:8px}
-.arrow em{display:block;font:italic 600 11px system-ui,sans-serif;color:#14222B;margin-top:-1px}
-.slbl{font:700 12px system-ui,sans-serif;color:#14222B;text-shadow:0 0 2px #fff,0 0 3px #fff,0 0 4px #fff;white-space:nowrap;text-align:center;transform:translate(-50%,-50%);pointer-events:none;line-height:1.1}
+.arrow em{display:block;font:italic 600 10px system-ui,sans-serif;color:#3A4A54}
+.slbl{color:#14222B;text-shadow:0 0 2px #fff,0 0 3px #fff,0 0 4px #fff;white-space:nowrap;text-align:center;transform:translate(-50%,-50%);pointer-events:none;line-height:1.1}
+.slbl .wv{display:block;margin:0 auto 1px}
+.slbl b{display:block;font:700 12px system-ui,sans-serif}
 .slbl em{display:block;font:italic 600 11px system-ui,sans-serif}

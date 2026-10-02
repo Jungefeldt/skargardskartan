@@ -70,6 +70,13 @@ const LA_DEF=[["under 0,1 m","Blankt eller små krusningar. Båten ligger still,
 // SMHI:s benämningar för vindstyrka
 const WIND_TERMS=[[0.3,"Lugnt"],[4,"Svag vind"],[8,"Måttlig vind"],[14,"Frisk vind"],[20,"Hård vind"],[25,"Mycket hård vind"],[33,"Storm"],[999,"Orkan"]];
 const windTerm=v=>v==null?"":WIND_TERMS.find(x=>v<x[0])[1];
+// Färg på vindpilarna efter medelvind: grön svag, gul måttlig, orange frisk, röd hård, mörkröd mycket hård
+const WIND_COL=[[4,"#2E9E5B"],[8,"#D9A400"],[14,"#E8731C"],[20,"#D0281F"],[999,"#7A1238"]];
+const windCol=v=>WIND_COL.find(x=>(v||0)<x[0])[1];
+// Liten vågsymbol i klassens färg, högre våg för grövre sjö
+const WAVE_COL=["#5FA9D6","#2668BA","#8E62CF","#E46E34","#BE262C"];
+function waveIcon(k){const a=[1,2,3,4,5][k],y=8,c=WAVE_COL[k];
+  return `<svg class="wv" width="22" height="14" viewBox="0 0 22 14" aria-hidden="true"><path d="M1 ${y} q2.5 ${-a} 5 0 t5 0 t5 0 t5 0" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/><path d="M1 ${y} q2.5 ${-a} 5 0 t5 0 t5 0 t5 0" fill="none" stroke="${c}" stroke-width="2.2" stroke-linecap="round"/></svg>`}
 // Våghöjd som text, avrundad men alltid inom klassens gränser
 const fmtWave=(h,k)=>{if(k===0)return"under 0,1 m";const lo=[0,.1,.3,.5,1][k],hi=[0,.2,.4,.9,99][k];return f1(Math.min(hi,Math.max(lo,Math.round(h*10)/10)))+" m"};
 const LA_RGBA=LA_CLASSES.map(c=>c[2].match(/[\d.]+/g).map(Number));
@@ -179,7 +186,7 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     const boxes=drawArrows(uiBoxes());
     if(showT||findOn)placeLabels(boxes,zoneCands(R,BAND,mz,vx0,vy0,vx1,vy1,b=>{const s=(b*tStep)+"–"+((b+1)*tStep)+"°";return{html:'<div class="zlbl">'+s+'</div>',w:s.length*7+6,h:16}},5,260,30),zoneLayer);
     if(showLa&&KARR&&S.layers.waves)placeLabels(boxes,zoneCands(R,KARR,mz,vx0,vy0,vx1,vy1,(k,i)=>{const h=wave(UF[i],F[i]),a=fmtWave(h,k),b2=LA_CLASSES[k][1].replace(" sjö","").toLowerCase();
-      return{html:'<div class="slbl">'+a+'<em>'+b2+'</em></div>',w:Math.max(a.length,b2.length)*7.2+6,h:30}},8,240,40),seaLayer);
+      return{html:'<div class="slbl">'+waveIcon(k)+'<b>'+a+'</b><em>'+b2+'</em></div>',w:Math.max(a.length,b2.length)*7.2+14,h:46}},8,240,40),seaLayer);
     legend();if(sel)sheet()}
   catch(e){console.error(e)}
   finally{busy=false;if(again){again=false;redraw()}}}
@@ -215,7 +222,7 @@ map.on("moveend",schedule);
 // ------------------------------------------------------------------ vindpilar
 const arrowLayer=L.layerGroup().addTo(map);
 function drawArrows(ui){arrowLayer.clearLayers();const boxes=(ui||[]).slice();if(!S.layers.arrows)return boxes;
-  const add=(ll,wd,ws,gust,big)=>{const s=big?40:30,p=map.latLngToContainerPoint(ll),bx=[p.x-30,p.y-s/2,p.x+30,p.y+s/2+28];
+  const add=(ll,wd,ws,gust,big)=>{const s=big?44:36,p=map.latLngToContainerPoint(ll),bx=[p.x-34,p.y-s/2,p.x+34,p.y+s/2+34];
     const sz=map.getSize();if(bx[0]<2||bx[1]<2||bx[2]>sz.x-2||bx[3]>sz.y-2)return;
     if(boxes.some(o=>bx[0]<o[2]&&bx[2]>o[0]&&bx[1]<o[3]&&bx[3]>o[1]))return;arrowAt(ll,wd,ws,gust,big);boxes.push(bx)};
   if(S.src==="egen"){add(map.getCenter(),S.own.dir,S.own.sp,null,true);return boxes}
@@ -223,9 +230,9 @@ function drawArrows(ui){arrowLayer.clearLayers();const boxes=(ui||[]).slice();if
   W.points.forEach((p,i)=>{const r=W.series[i][S.ti];if(!r||r[ki("ws")]==null)return;const row=Math.round((p[0]-W.points[0][0])/0.1),col=Math.round((p[1]-W.points[0][1])/0.15);
     if(row%every||col%every)return;if(!b.contains(p))return;add(L.latLng(p[0],p[1]),r[ki("wd")],r[ki("ws")],r[ki("gust")])});
   return boxes}
-function arrowAt(ll,wd,ws,gust,big){const s=big?40:30;
-  const html=`<svg width="${s}" height="${s}" viewBox="-15 -15 30 30" style="transform:rotate(${wd+180}deg)"><path d="M0 -13 L7 3 L1.5 1 L1.5 12 L-1.5 12 L-1.5 1 L-7 3 Z" fill="#14222B" stroke="#fff" stroke-width="1.6" paint-order="stroke"/></svg><span>${f0(ws)}${gust!=null?" ("+f0(gust)+")":""}<em>${windTerm(ws).replace(" vind","").toLowerCase()}</em></span>`;
-  L.marker(ll,{pane:"lbl",interactive:false,keyboard:false,icon:L.divIcon({className:"arrow",html,iconSize:[76,s+30],iconAnchor:[38,s/2]})}).addTo(arrowLayer)}
+function arrowAt(ll,wd,ws,gust,big){const s=big?44:36,c=windCol(ws);
+  const html=`<svg width="${s}" height="${s}" viewBox="-16 -16 32 32" style="transform:rotate(${wd+180}deg)"><path d="M0 -14 L9 4 L2.5 1.5 L2.5 13 L-2.5 13 L-2.5 1.5 L-9 4 Z" fill="${c}" stroke="#fff" stroke-width="2.4" stroke-linejoin="round" paint-order="stroke"/></svg><span style="border-color:${c}"><b>${f0(ws)}${gust!=null?" ("+f0(gust)+")":""}</b><em>${windTerm(ws).replace(" vind","").toLowerCase()}</em></span>`;
+  L.marker(ll,{pane:"lbl",interactive:false,keyboard:false,icon:L.divIcon({className:"arrow",html,iconSize:[76,s+34],iconAnchor:[38,s/2]})}).addTo(arrowLayer)}
 
 // ------------------------------------------------------------------ förklaring
 function legend(){const L_=$("legend"),w=laWind||domainWind(S.ti);let h="";
@@ -233,6 +240,7 @@ function legend(){const L_=$("legend"),w=laWind||domainWind(S.ti);let h="";
   else if(S.layers.la)h+=LA_CLASSES.map(c=>`<span><i style="background:${c[2]}"></i>${c[1]}</span>`).join("");
   else if(S.layers.temp&&tRange)h+=`<div class="grad" style="background:linear-gradient(90deg,${TSTOPS.map(s=>s[1]+" "+(s[0]/24*100)+"%").join(",")})"></div><div class="gl"><span>0</span><span>6</span><span>12</span><span>18</span><span>24 °C</span></div>`;
   if((S.layers.la||S.find.on)&&w)h=`<span><b>${dirName(w.wd)} ${f0(w.ws)} m/s${w.gust!=null?", byar "+f0(w.gust):""}</b>${S.src==="prognos"?" (medel för området) · räknat på "+(S.basis==="byar"&&w.gust!=null?"byar":"medelvind"):""}</span>`+h;
+  if(S.layers.arrows)h+=`<span style="flex:1 1 100%">Vindpilar: `+[["svag",0],["måttlig",4],["frisk",8],["hård",14],["mycket hård",20]].map(x=>`<i style="background:${windCol(x[1])};margin:0 3px 0 6px;border-radius:50%;width:10px"></i>${x[0]}`).join("")+`</span>`;
   if((S.layers.temp||S.find.on)&&tRange)h+=`<span><i style="background:#0B3550;height:2px;border:0"></i>Vattentemp, zoner om ${tStep} °C (${f0(tRange[0])} till ${f0(tRange[1])} här)</span>`;
   L_.innerHTML=h}
 
