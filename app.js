@@ -25,22 +25,22 @@ function hideCanvas(pane){pane=pane||"ov";if(overlays[pane]){map.removeLayer(ove
 const LANDCOL={gul:[244,226,160],vit:[246,246,242]};
 
 // ------------------------------------------------------------------ data
-const S={basis:"byar",land:"gul",wind:null,temp:null,T:null,layers:{la:true,temp:false,arrows:true,waves:true},find:{on:false,maxK:0,tmin:null,tmax:null},src:"prognos",own:{dir:225,sp:8},ti:0};
+const S={basis:"byar",land:"gul",wind:null,temp:null,T:null,layers:{la:true,temp:false,arrows:true,waves:true,priv:true},privOk:false,find:{on:false,maxK:0,tmin:null,tmax:null},src:"prognos",own:{dir:225,sp:8},ti:0};
 async function getJSON(u){const r=await fetch(u,{cache:"no-cache"});if(!r.ok)throw new Error(u+" "+r.status);return r.json()}
 
 // ------------------------------------------------------------------ land/vatten-mask
 const tiles=new Map();
-function tile(z,x,y){const k=z+"/"+x+"/"+y;if(tiles.has(k))return tiles.get(k);
+function tile(z,x,y,pre){pre=pre||"mask/";const k=pre+z+"/"+x+"/"+y;if(tiles.has(k))return tiles.get(k);
   const p=new Promise(res=>{const im=new Image();im.onload=()=>{const c=document.createElement("canvas");c.width=c.height=256;const g=c.getContext("2d");g.drawImage(im,0,0);
       const d=g.getImageData(0,0,256,256).data,a=new Uint8Array(65536);for(let i=0;i<65536;i++)a[i]=d[i*4]>127?1:0;res(a)};
-    im.onerror=()=>res(null);im.src="mask/"+k+".png"});
+    im.onerror=()=>res(null);im.src=k+".png"});
   tiles.set(k,p);return p}
-async function region(z,px0,py0,W,H){const water=new Uint8Array(W*H);const tx0=Math.floor(px0/256),ty0=Math.floor(py0/256),tx1=Math.floor((px0+W-1)/256),ty1=Math.floor((py0+H-1)/256);
-  const jobs=[];for(let tx=tx0;tx<=tx1;tx++)for(let ty=ty0;ty<=ty1;ty++)jobs.push(tile(z,tx,ty).then(a=>({tx,ty,a})));
-  for(const {tx,ty,a} of await Promise.all(jobs)){const ox=tx*256-px0,oy=ty*256-py0;
+async function region(z,px0,py0,W,H){const water=new Uint8Array(W*H),priv=new Uint8Array(W*H),pz=Math.max(11,Math.min(13,z));const tx0=Math.floor(px0/256),ty0=Math.floor(py0/256),tx1=Math.floor((px0+W-1)/256),ty1=Math.floor((py0+H-1)/256);
+  const jobs=[];for(let tx=tx0;tx<=tx1;tx++)for(let ty=ty0;ty<=ty1;ty++)jobs.push(Promise.all([tile(z,tx,ty),S.privOk&&pz===z?tile(z,tx,ty,"mask/privat/"):null]).then(([a,p])=>({tx,ty,a,p})));
+  for(const {tx,ty,a,p} of await Promise.all(jobs)){const ox=tx*256-px0,oy=ty*256-py0;
     for(let yy=Math.max(0,oy);yy<Math.min(H,oy+256);yy++){const ry=(yy-oy)*256,wy=yy*W;
-      for(let xx=Math.max(0,ox);xx<Math.min(W,ox+256);xx++)water[wy+xx]=a?a[ry+xx-ox]:1}}
-  return{z,px0,py0,W,H,water}}
+      for(let xx=Math.max(0,ox);xx<Math.min(W,ox+256);xx++){water[wy+xx]=a?a[ry+xx-ox]:1;if(p)priv[wy+xx]=p[ry+xx-ox]}}}
+  return{z,px0,py0,W,H,water,priv}}
 const mpp=(z,lat)=>156543.034*Math.cos(lat*Math.PI/180)/Math.pow(2,z);
 
 // ------------------------------------------------------------------ lä
@@ -80,7 +80,7 @@ function waveIcon(k){const a=[1,2,3,4,5][k],y=8,c=WAVE_COL[k];
 // Våghöjd som text, avrundad men alltid inom klassens gränser
 const fmtWave=(h,k)=>{if(k===0)return"under 0,1 m";const lo=[0,.1,.3,.5,1][k],hi=[0,.2,.4,.9,99][k];return f1(Math.min(hi,Math.max(lo,Math.round(h*10)/10)))+" m"};
 const LA_RGBA=LA_CLASSES.map(c=>c[2].match(/[\d.]+/g).map(Number));
-let laR=null,laF=null,laWind=null,laU=null,fetchCache={key:null,F:null};
+let laR=null,laF=null,laWind=null,laU=null,fetchCache={key:null,F:null},lastR=null;
 
 // ------------------------------------------------------------------ vind på en plats och tid
 let KI=null;
@@ -137,7 +137,8 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     const Lyr=S.layers,F_=S.find,needLa=Lyr.la||F_.on,needT=Lyr.temp||F_.on,di=needT?tempDay():-1;
     const haveT=needT&&di>=0&&S.temp,w=needLa?domainWind(S.ti):null,haveLa=needLa&&w&&w.ws!=null;
     const tintOn=S.land!=="karta";if(!tintOn)hideCanvas("tint");
-    if(!haveLa&&!haveT&&!tintOn){hideCanvas();laR=null;laT=null;drawArrows(uiBoxes());legend();if(sel)sheet();return}
+    const privOn=S.privOk&&Lyr.priv;
+    if(!haveLa&&!haveT&&!tintOn&&!privOn){hideCanvas();laR=null;laT=null;drawArrows(uiBoxes());legend();if(sel)sheet();return}
     const zz=map.getZoom(),mz=zz<=10?11:zz<=13?12:13,b=map.getBounds(),nw=CRS.latLngToPoint(b.getNorthWest(),mz),se=CRS.latLngToPoint(b.getSouthEast(),mz);
     let x0=Math.floor(nw.x),y0=Math.floor(nw.y),x1=Math.ceil(se.x),y1=Math.ceil(se.y);const vx0=x0,vy0=y0,vx1=x1,vy1=y1;
     const m=mpp(mz,map.getCenter().lat),cap=CAP_M/m;
@@ -145,7 +146,8 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
       x0=Math.floor(x0);y0=Math.floor(y0);x1=Math.ceil(x1);y1=Math.ceil(y1)}
     const R=await region(mz,x0,y0,x1-x0,y1-y0);if(my!==seq)return;const N=R.W*R.H,WA=R.water;
     if(tintOn){const lc=LANDCOL[S.land];showCanvas(R,D=>{for(let i=0;i<N;i++){if(WA[i])continue;const p=i*4;D[p]=lc[0];D[p+1]=lc[1];D[p+2]=lc[2];D[p+3]=255}},"tint")}
-    if(!haveLa&&!haveT){hideCanvas();laR=null;laT=null;drawArrows(uiBoxes());legend();if(sel)sheet();return}
+    lastR=R;
+    if(!haveLa&&!haveT&&!privOn){hideCanvas();laR=null;laT=null;drawArrows(uiBoxes());legend();if(sel)sheet();return}
     // lä
     // riktningen avrundas till 5 grader; samma vy och riktning återanvänder beräkningen (snabb uppspelning)
     let F=null;if(haveLa){const dr=Math.round(w.wd/5)*5,key=[mz,R.px0,R.py0,R.W,R.H,dr].join("|");
@@ -174,10 +176,12 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     // måla
     const showLa=haveLa&&Lyr.la,showT=haveT&&Lyr.temp,findOn=F_.on&&haveLa&&haveT,KARR=showLa&&!findOn?new Int16Array(N).fill(-999):null;
     showCanvas(R,D=>{for(let i=0;i<N;i++){if(!WA[i])continue;const p=i*4;let r=0,g=0,bb=0,a=0;
-        if(findOn){let k=0;const h=wave(UF[i],F[i]);while(h>=LA_CLASSES[k][0])k++;const tv=TV[i],ok=k<=F_.maxK&&tv>=F_.tmin&&tv<=F_.tmax;
+        if(findOn){let k=0;const h=wave(UF[i],F[i]);while(h>=LA_CLASSES[k][0])k++;const tv=TV[i],ok=k<=F_.maxK&&tv>=F_.tmin&&tv<=F_.tmax&&!(S.privOk&&R.priv[i]);
           if(ok){r=214;g=24;bb=138;a=170}else{r=70;g=80;bb=88;a=95}}
         else if(showLa){let k=0;const h=wave(UF[i],F[i]);while(h>=LA_CLASSES[k][0])k++;KARR[i]=k;const c=LA_RGBA[k];r=c[0];g=c[1];bb=c[2];a=c[3]*255}
         else if(showT){let k=Math.round(((BAND[i]+.5)*tStep)/24*255);k=k<0?0:k>255?255:k;r=TLUT[k*3];g=TLUT[k*3+1];bb=TLUT[k*3+2];a=150}
+        // hemfridszon: mörk yta med kant ovanpå allt annat i vattnet
+        if(privOn&&R.priv[i]){const P=R.priv,Wd=R.W,edge=!P[i-1]||!P[i+1]||!P[i-Wd]||!P[i+Wd];if(edge){r=40;g=30;bb=28;a=235}else{r=70;g=56;bb=50;a=165}}
         D[p]=r;D[p+1]=g;D[p+2]=bb;D[p+3]=a}
       // zongränser för temperaturen, som djupkurvor
       if(showT||findOn){const W2=R.W;for(let y=0;y<R.H-1;y++)for(let x=0;x<W2-1;x++){const i=y*W2+x,bnd=BAND[i];if(bnd===-999)continue;
@@ -240,6 +244,7 @@ function legend(){const L_=$("legend"),w=laWind||domainWind(S.ti);let h="";
   else if(S.layers.la)h+=LA_CLASSES.map(c=>`<span><i style="background:${c[2]}"></i>${c[1]}</span>`).join("");
   else if(S.layers.temp&&tRange)h+=`<div class="grad" style="background:linear-gradient(90deg,${TSTOPS.map(s=>s[1]+" "+(s[0]/24*100)+"%").join(",")})"></div><div class="gl"><span>0</span><span>6</span><span>12</span><span>18</span><span>24 °C</span></div>`;
   if((S.layers.la||S.find.on)&&w)h=`<span><b>${dirName(w.wd)} ${f0(w.ws)} m/s${w.gust!=null?", byar "+f0(w.gust):""}</b>${S.src==="prognos"?" (medel för området) · räknat på "+(S.basis==="byar"&&w.gust!=null?"byar":"medelvind"):""}</span>`+h;
+  if(S.privOk&&S.layers.priv)h+=`<span><i style="background:rgba(70,56,50,.65);border:2px solid #281E1C"></i>Inom ${S.privM} m från brygga eller hus</span>`;
   if(S.layers.arrows)h+=`<span style="flex:1 1 100%">Vindpilar: `+[["svag",0],["måttlig",4],["frisk",8],["hård",14],["mycket hård",20]].map(x=>`<i style="background:${windCol(x[1])};margin:0 3px 0 6px;border-radius:50%;width:10px"></i>${x[0]}`).join("")+`</span>`;
   if((S.layers.temp||S.find.on)&&tRange)h+=`<span><i style="background:#0B3550;height:2px;border:0"></i>Vattentemp, zoner om ${tStep} °C (${f0(tRange[0])} till ${f0(tRange[1])} här)</span>`;
   L_.innerHTML=h}
@@ -290,6 +295,8 @@ let sel=null,pin=null,tapT=null;
 map.on("dblclick",()=>clearTimeout(tapT));
 map.on("click",e=>{clearTimeout(tapT);tapT=setTimeout(()=>{sel=e.latlng;if(pin)pin.setLatLng(sel);else pin=L.circleMarker(sel,{radius:7,weight:2.5,color:"#14222B",fillOpacity:0,interactive:false}).addTo(map);sheet()},250)});
 $("close").onclick=()=>{$("sheet").classList.remove("open");sel=null;if(pin){map.removeLayer(pin);pin=null}};
+function inPriv(ll){const R=lastR;if(!S.privOk||!R||!R.priv)return false;const p=CRS.latLngToPoint(ll,R.z),x=Math.floor(p.x-R.px0),y=Math.floor(p.y-R.py0);
+  if(x<0||y<0||x>=R.W||y>=R.H)return false;const i=y*R.W+x;return !!(R.priv[i]&&R.water[i])}
 function laAt(ll){if(!laR||!laF)return null;const p=CRS.latLngToPoint(ll,laR.z),x=Math.floor(p.x-laR.px0),y=Math.floor(p.y-laR.py0);if(x<0||y<0||x>=laR.W||y>=laR.H)return null;
   const i=y*laR.W+x;return laR.water[i]?laF[i]:-1}
 function sheet(){const ll=sel,W=S.wind,w=W?windAt(ll.lat,ll.lng,S.ti):null,di=tempDay(),wt=tempAt(ll.lat,ll.lng,di),la=laR?laAt(ll):null,lw=laWind;
@@ -303,6 +310,7 @@ function sheet(){const ll=sel,W=S.wind,w=W?windAt(ll.lat,ll.lng,S.ti):null,di=te
   if(wt!=null)h+=`<dt>Vattentemp</dt><dd>${f0(wt)} °C</dd>`;
   if(S.find.on&&la!=null&&la>=0&&lu!=null&&wt!=null){let k=0;const hs=wave(lu,la);while(hs>=LA_CLASSES[k][0])k++;const ok=k<=S.find.maxK&&wt>=S.find.tmin&&wt<=S.find.tmax;h+=`<dt>Villkoren</dt><dd>${ok?"uppfylls":"uppfylls inte"}</dd>`}
   h+=`</dl>`;
+  if(inPriv(ll))h+=`<p class="warn" style="background:rgba(60,50,45,.1);border-color:#3A322D">Inom ${S.privM} m från brygga eller hus. Här kan det vara hemfridszon, välj gärna en annan plats.</p>`;
   if(w&&la!=null&&la>=0){const g=w.gust!=null?w.gust:w.ws;if(g>=10)h+=`<p class="warn">Byar upp till ${f0(g)} m/s. Även i lä kan byarna slå ner över öarna och ge kraftig drift och snabba vindkast vid båten.</p>`}
   if(W){h+=`<div class="hours">`;for(let i=S.ti;i<W.times.length&&i<S.ti+30;i+=3){const x=windAt(ll.lat,ll.lng,i);if(!x)continue;const d=new Date(W.times[i]);
       h+=`<div>${String(d.getHours()).padStart(2,"0")}<b>${dirName(x.wd)} ${f0(x.ws)}</b>${x.gust!=null?"("+f0(x.gust)+")":""}</div>`}h+=`</div>`}
@@ -317,6 +325,7 @@ $("loc").onclick=()=>{if(me){map.setView(me.getLatLng(),Math.max(map.getZoom(),1
 
 // ------------------------------------------------------------------ start
 (async()=>{
+  try{const pi=await getJSON("mask/privat/info.json");S.privOk=true;S.privM=pi.meter||25}catch(_){$("privchip")&&($("privchip").hidden=true)}
   try{const info=await getJSON("mask/info.json");const [w,s,e,n]=info.bounds;map.setMaxBounds(L.latLngBounds([s,w],[n,e]).pad(.4))}catch(_){}
   try{S.wind=await getJSON("data/wind.json");$("time").max=S.wind.times.length-1}catch(_){toast("Ingen vinddata än");$("when").textContent="Ingen vinddata"}
   try{S.temp=await getJSON("data/temp.json");const b=atob(S.temp.t),a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);S.T=a;smoothTemp()}catch(_){}
