@@ -135,10 +135,13 @@ def update_temp():
     except ImportError:
         print("copernicusmarine saknas, hoppar över vattentemperatur")
         return
+    if not (user and pwd):
+        print("Copernicus-inloggning saknas (hemligheterna COPERNICUS_USER och COPERNICUS_PASSWORD), hoppar över vattentemperatur")
+        return
     today = utcnow().date()
     start = today - dt.timedelta(days=DAYS_BACK)
     end = today + dt.timedelta(days=10)
-    kw = {"username": user, "password": pwd} if user and pwd else {}
+    kw = {"username": user, "password": pwd}
     print(f"Copernicus: {start} till {end}", flush=True)
     try:
         ds = cm.open_dataset(
@@ -148,6 +151,9 @@ def update_temp():
             start_datetime=f"{start}T00:00:00", end_datetime=f"{end}T23:59:59", **kw)
     except Exception as ex:  # noqa: BLE001
         print(f"  Copernicus misslyckades: {str(ex).splitlines()[0][:200]}")
+        return
+    if ds is None:
+        print("  Copernicus gav ingen data (kontrollera användarnamn och lösenord), hoppar över")
         return
     da = ds["thetao"]
     if "depth" in da.dims:
