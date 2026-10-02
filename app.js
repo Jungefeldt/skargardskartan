@@ -61,7 +61,7 @@ function fetchPass(R,dirDeg,capPx){const W=R.W,H=R.H,wa=R.water,F=new Float32Arr
 const CAP_M=6000;
 // Våghöjd vid begränsat öppet vatten (JONSWAP), max fullt utvecklad sjö
 const wave=(U,F)=>Math.min(0.000511*U*Math.sqrt(F),0.0214*U*U);
-const LA_CLASSES=[[0.1,"Lä","rgba(23,84,166,.62)"],[0.25,"Krusning","rgba(96,170,222,.55)"],[0.5,"Måttlig sjö","rgba(150,110,205,.6)"],[1,"Grov sjö","rgba(228,110,52,.65)"],[99,"Hård sjö","rgba(190,38,44,.68)"]];
+const LA_CLASSES=[[0.1,"Lä","rgba(196,232,250,.82)"],[0.25,"Krusning","rgba(38,104,186,.62)"],[0.5,"Måttlig sjö","rgba(150,110,205,.6)"],[1,"Grov sjö","rgba(228,110,52,.65)"],[99,"Hård sjö","rgba(190,38,44,.68)"]];
 const LA_RGBA=LA_CLASSES.map(c=>c[2].match(/[\d.]+/g).map(Number));
 let laR=null,laF=null,laWind=null;
 
