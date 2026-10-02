@@ -57,11 +57,17 @@
       <button role="radio" data-src="prognos" aria-checked="true">Prognos</button>
       <button role="radio" data-src="egen" aria-checked="false">Egen vind</button>
     </div></div>
+  <div class="frow"><span>Räkna på</span>
+    <div class="seg small" role="radiogroup" aria-label="Vind som vågorna räknas på">
+      <button role="radio" data-basis="byar" aria-checked="true">Byar</button>
+      <button role="radio" data-basis="medel" aria-checked="false">Medelvind</button>
+    </div></div>
   <div id="own" hidden>
     <div class="dirs" id="dirs"></div>
     <label class="sl">Styrka <b id="spv">8 m/s</b><input type="range" id="sp" min="1" max="20" value="8"></label>
   </div>
   <div class="legend" id="legend"></div>
+  <button class="linkbtn" id="explain">Vad betyder färgerna?</button>
 </section>
 
 <div class="side">

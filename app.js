@@ -25,7 +25,7 @@ function hideCanvas(pane){pane=pane||"ov";if(overlays[pane]){map.removeLayer(ove
 const LANDCOL={gul:[244,226,160],vit:[246,246,242]};
 
 // ------------------------------------------------------------------ data
-const S={land:"gul",wind:null,temp:null,T:null,layers:{la:true,temp:false,arrows:true},find:{on:false,maxK:0,tmin:null,tmax:null},src:"prognos",own:{dir:225,sp:8},ti:0};
+const S={basis:"byar",land:"gul",wind:null,temp:null,T:null,layers:{la:true,temp:false,arrows:true},find:{on:false,maxK:0,tmin:null,tmax:null},src:"prognos",own:{dir:225,sp:8},ti:0};
 async function getJSON(u){const r=await fetch(u,{cache:"no-cache"});if(!r.ok)throw new Error(u+" "+r.status);return r.json()}
 
 // ------------------------------------------------------------------ land/vatten-mask
@@ -62,6 +62,14 @@ const CAP_M=6000;
 // Våghöjd vid begränsat öppet vatten (JONSWAP), max fullt utvecklad sjö
 const wave=(U,F)=>Math.min(0.000511*U*Math.sqrt(F),0.0214*U*U);
 const LA_CLASSES=[[0.1,"Lä","rgba(196,232,250,.82)"],[0.25,"Krusning","rgba(38,104,186,.62)"],[0.5,"Måttlig sjö","rgba(150,110,205,.6)"],[1,"Grov sjö","rgba(228,110,52,.65)"],[99,"Hård sjö","rgba(190,38,44,.68)"]];
+const LA_DEF=[["under 0,1 m","Blankt eller små krusningar. Båten ligger still, lätt att ankra och fiska på drift."],
+  ["0,1–0,25 m","Små vågor utan vita toppar. Bekvämt att fiska från liten båt."],
+  ["0,25–0,5 m","Tydliga vågor, enstaka vita toppar. Båten gungar, stänk vid gång, svårare att stå upp och kasta."],
+  ["0,5–1 m","Många vita toppar. Obekvämt och blött i mindre öppen båt, fiske blir svårt."],
+  ["över 1 m","Hög och krabb sjö. Olämpligt för små båtar."]];
+// SMHI:s benämningar för vindstyrka
+const WIND_TERMS=[[0.3,"Lugnt"],[4,"Svag vind"],[8,"Måttlig vind"],[14,"Frisk vind"],[20,"Hård vind"],[25,"Mycket hård vind"],[33,"Storm"],[999,"Orkan"]];
+const windTerm=v=>v==null?"":WIND_TERMS.find(x=>v<x[0])[1];
 const LA_RGBA=LA_CLASSES.map(c=>c[2].match(/[\d.]+/g).map(Number));
 let laR=null,laF=null,laWind=null;
 
@@ -75,7 +83,9 @@ function windAt(lat,lon,ti){const W=S.wind;if(!W)return null;let sw=0,su=0,sv=0,
   if(!sw){if(!best)return null;return{ws:best[ki("ws")],wd:best[ki("wd")],gust:best[ki("gust")],t:best[ki("t")],pr:best[ki("pr")]}}
   const ws=Math.hypot(su,sv)/sw;let wd=Math.atan2(su,sv)*180/Math.PI;if(wd<0)wd+=360;
   return{ws,wd,gust:sgw?sg/sgw:null,t:stw?st/stw:null,pr:spw?sp/spw:null}}
-function currentWind(){if(S.src==="egen")return{ws:S.own.sp,wd:S.own.dir};const c=map.getCenter();return windAt(c.lat,c.lng,S.ti)}
+function currentWind(){if(S.src==="egen")return{ws:S.own.sp,wd:S.own.dir,gust:null};const c=map.getCenter();return windAt(c.lat,c.lng,S.ti)}
+// byar eller medelvind (egen vind räknas alltid som angiven styrka)
+const calcU=w=>S.basis==="byar"&&w.gust!=null?Math.max(w.ws,w.gust):w.ws;
 const DIR16=["N","NNO","NO","ONO","O","OSO","SO","SSO","S","SSV","SV","VSV","V","VNV","NV","NNV"];
 const dirName=d=>DIR16[Math.round(d/22.5)%16];
 const f1=v=>v==null||isNaN(v)?"–":v.toFixed(1).replace(".",",");
@@ -121,7 +131,7 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     if(!haveLa&&!haveT){hideCanvas();laR=null;laT=null;drawArrows();legend();if(sel)sheet();return}
     // lä
     let F=null;if(haveLa){const A=fetchPass(R,w.wd-20,cap),B=fetchPass(R,w.wd,cap),C=fetchPass(R,w.wd+20,cap);F=new Float32Array(N);for(let i=0;i<N;i++)F[i]=(A[i]+2*B[i]+C[i])/4*m}
-    laR=haveLa?R:null;laF=F;laWind=haveLa?w:null;
+    laR=haveLa?R:null;laF=F;laWind=haveLa?w:null;const U=haveLa?calcU(w):0;
     // vattentemperatur per pixel
     let TV=null,BAND=null;
     if(haveT){const G=S.temp,T=S.TF,base=di*G.nx*G.ny,rowFy=new Float32Array(R.H),colFx=new Float32Array(R.W);TV=new Float32Array(N);
@@ -140,9 +150,9 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     // måla
     const showLa=haveLa&&Lyr.la,showT=haveT&&Lyr.temp,findOn=F_.on&&haveLa&&haveT;
     showCanvas(R,D=>{for(let i=0;i<N;i++){if(!WA[i])continue;const p=i*4;let r=0,g=0,bb=0,a=0;
-        if(findOn){let k=0;const h=wave(w.ws,F[i]);while(h>=LA_CLASSES[k][0])k++;const tv=TV[i],ok=k<=F_.maxK&&tv>=F_.tmin&&tv<=F_.tmax;
+        if(findOn){let k=0;const h=wave(U,F[i]);while(h>=LA_CLASSES[k][0])k++;const tv=TV[i],ok=k<=F_.maxK&&tv>=F_.tmin&&tv<=F_.tmax;
           if(ok){r=214;g=24;bb=138;a=170}else{r=70;g=80;bb=88;a=95}}
-        else if(showLa){let k=0;const h=wave(w.ws,F[i]);while(h>=LA_CLASSES[k][0])k++;const c=LA_RGBA[k];r=c[0];g=c[1];bb=c[2];a=c[3]*255}
+        else if(showLa){let k=0;const h=wave(U,F[i]);while(h>=LA_CLASSES[k][0])k++;const c=LA_RGBA[k];r=c[0];g=c[1];bb=c[2];a=c[3]*255}
         else if(showT){let k=Math.round(((BAND[i]+.5)*tStep)/24*255);k=k<0?0:k>255?255:k;r=TLUT[k*3];g=TLUT[k*3+1];bb=TLUT[k*3+2];a=150}
         D[p]=r;D[p+1]=g;D[p+2]=bb;D[p+3]=a}
       // zongränser för temperaturen, som djupkurvor
@@ -187,7 +197,7 @@ function legend(){const L_=$("legend"),w=laWind||currentWind();let h="";
   if(S.find.on)h+=`<span><i style="background:rgba(214,24,138,.67)"></i>Uppfyller villkoren</span><span><i style="background:rgba(70,80,88,.37)"></i>Övrigt vatten</span>`;
   else if(S.layers.la)h+=LA_CLASSES.map(c=>`<span><i style="background:${c[2]}"></i>${c[1]}</span>`).join("");
   else if(S.layers.temp&&tRange)h+=`<div class="grad" style="background:linear-gradient(90deg,${TSTOPS.map(s=>s[1]+" "+(s[0]/24*100)+"%").join(",")})"></div><div class="gl"><span>0</span><span>6</span><span>12</span><span>18</span><span>24 °C</span></div>`;
-  if((S.layers.la||S.find.on)&&w)h=`<span><b>${dirName(w.wd)} ${f0(w.ws)} m/s</b></span>`+h;
+  if((S.layers.la||S.find.on)&&w)h=`<span><b>${dirName(w.wd)} ${f0(w.ws)} m/s${w.gust!=null?", byar "+f0(w.gust):""}</b>${S.src==="prognos"?" · räknat på "+(S.basis==="byar"&&w.gust!=null?"byar":"medelvind"):""}</span>`+h;
   if((S.layers.temp||S.find.on)&&tRange)h+=`<span><i style="background:#0B3550;height:2px;border:0"></i>Vattentemp, zoner om ${fmtStep(tStep)} °C (${f1(tRange[0])} till ${f1(tRange[1])} här)</span>`;
   L_.innerHTML=h}
 
@@ -217,6 +227,14 @@ $("tmin").oninput=e=>{S.find.tmin=Math.min(+e.target.value,S.find.tmax);syncFind
 $("tmax").oninput=e=>{S.find.tmax=Math.max(+e.target.value,S.find.tmin);syncFind();schedule()};
 document.querySelectorAll("[data-land]").forEach(b=>b.onclick=()=>{S.land=b.dataset.land;document.querySelectorAll("[data-land]").forEach(x=>x.setAttribute("aria-checked",x===b));try{localStorage.setItem("land",S.land)}catch(_){}schedule()});
 try{const sv=localStorage.getItem("land");if(sv&&LANDCOL[sv]!==undefined||sv==="karta"){S.land=sv;document.querySelectorAll("[data-land]").forEach(x=>x.setAttribute("aria-checked",x.dataset.land===sv))}}catch(_){}
+document.querySelectorAll("[data-basis]").forEach(b=>b.onclick=()=>{S.basis=b.dataset.basis;document.querySelectorAll("[data-basis]").forEach(x=>x.setAttribute("aria-checked",x===b));try{localStorage.setItem("basis",S.basis)}catch(_){}schedule()});
+try{const sb=localStorage.getItem("basis");if(sb==="medel"||sb==="byar"){S.basis=sb;document.querySelectorAll("[data-basis]").forEach(x=>x.setAttribute("aria-checked",x.dataset.basis===sb))}}catch(_){}
+$("explain").onclick=()=>{let h=`<h3>Färger för lä och sjögång</h3><p class="note" style="margin-top:2px;padding-right:44px">Klassen bestäms av uppskattad våghöjd (signifikant våghöjd, ungefär medelhöjden av den högsta tredjedelen av vågorna). Den räknas från vindstyrkan och hur mycket öppet vatten det finns mot vinden, högst 6 km.</p>
+    <table class="deftab"><tr><th>Klass</th><th>Våg</th><th>Så känns det</th></tr>`+LA_CLASSES.map((c,i)=>`<tr><td><i style="background:${c[2]}"></i>${c[1]}</td><td>${LA_DEF[i][0]}</td><td>${LA_DEF[i][1]}</td></tr>`).join("")+`</table>
+    <h3>Räkna på byar eller medelvind</h3><p class="note" style="margin-top:2px"><b>Byar</b> (förvalt) räknar vågorna på den starkaste vinden i prognosen. Det ger en försiktig bild, bra när du ska ligga still och fiska. <b>Medelvind</b> stämmer bättre med hur vågorna oftast blir, men underskattar läget när det är byigt.</p>
+    <h3>Vindstyrka (SMHI)</h3><table class="deftab"><tr><th>Benämning</th><th>m/s</th></tr><tr><td>Lugnt</td><td>0–0,2</td></tr><tr><td>Svag vind</td><td>0,3–3</td></tr><tr><td>Måttlig vind</td><td>4–7</td></tr><tr><td>Frisk vind</td><td>8–13</td></tr><tr><td>Hård vind</td><td>14–19</td></tr><tr><td>Mycket hård vind</td><td>20–24</td></tr><tr><td>Storm</td><td>25–32</td></tr></table>
+    <p class="note">Uppskattningen tar inte hänsyn till dyning, strömmar eller båttrafik, och vågor böjer runt små öar. Använd den som stöd, inte för navigering.</p>`;
+  $("sheetc").innerHTML=h;$("sheet").classList.add("open")};
 document.querySelectorAll("[data-src]").forEach(b=>b.onclick=()=>{S.src=b.dataset.src;document.querySelectorAll("[data-src]").forEach(x=>x.setAttribute("aria-checked",x===b));$("own").hidden=S.src!=="egen";schedule()});
 $("hide").onclick=()=>$("panel").classList.toggle("hidden");
 const DIR8=[["N",0],["NO",45],["O",90],["SO",135],["S",180],["SV",225],["V",270],["NV",315]];
@@ -234,13 +252,14 @@ function laAt(ll){if(!laR||!laF)return null;const p=CRS.latLngToPoint(ll,laR.z),
 function sheet(){const ll=sel,W=S.wind,w=W?windAt(ll.lat,ll.lng,S.ti):null,di=tempDay(),wt=tempAt(ll.lat,ll.lng,di),la=laR?laAt(ll):null,lw=laWind;
   let h=`<h3>${fmtTime(W?W.times[S.ti]:new Date().toISOString())} · ${ll.lat.toFixed(4).replace(".",",")}° N ${ll.lng.toFixed(4).replace(".",",")}° E</h3>`;
   if(la===-1)h+=`<div class="big">Land</div>`;
-  else if(la!=null&&lw){const hs=wave(lw.ws,la);let k=0;while(hs>=LA_CLASSES[k][0])k++;
+  else if(la!=null&&lw){const hs=wave(calcU(lw),la);let k=0;while(hs>=LA_CLASSES[k][0])k++;
     h+=`<div class="big">${LA_CLASSES[k][1]} <small>ca ${f1(hs)} m våg</small></div><dl class="kv"><dt>Öppet vatten mot vinden</dt><dd>${la>=CAP_M*0.98?"över 6 km":la<1000?f0(la/10)*10+" m":f1(la/1000)+" km"}</dd>`;}
   else h+=`<dl class="kv">`;
-  if(w)h+=`<dt>Vind${S.src==="egen"?" (prognos)":""}</dt><dd>${dirName(w.wd)} ${f0(w.ws)} m/s${w.gust!=null?", byar "+f0(w.gust):""}</dd><dt>Luft</dt><dd>${f1(w.t)} °C</dd><dt>Nederbörd</dt><dd>${f1(w.pr)} mm/h</dd>`;
+  if(w)h+=`<dt>Vind${S.src==="egen"?" (prognos)":""}</dt><dd>${dirName(w.wd)} ${f0(w.ws)} m/s${w.gust!=null?", byar "+f0(w.gust):""} <span style="font-weight:500;color:var(--muted)">(${windTerm(w.ws).toLowerCase()})</span></dd><dt>Luft</dt><dd>${f1(w.t)} °C</dd><dt>Nederbörd</dt><dd>${f1(w.pr)} mm/h</dd>`;
   if(wt!=null)h+=`<dt>Vattentemp</dt><dd>${f1(wt)} °C</dd>`;
-  if(S.find.on&&la!=null&&la>=0&&lw&&wt!=null){let k=0;const hs=wave(lw.ws,la);while(hs>=LA_CLASSES[k][0])k++;const ok=k<=S.find.maxK&&wt>=S.find.tmin&&wt<=S.find.tmax;h+=`<dt>Villkoren</dt><dd>${ok?"uppfylls":"uppfylls inte"}</dd>`}
+  if(S.find.on&&la!=null&&la>=0&&lw&&wt!=null){let k=0;const hs=wave(calcU(lw),la);while(hs>=LA_CLASSES[k][0])k++;const ok=k<=S.find.maxK&&wt>=S.find.tmin&&wt<=S.find.tmax;h+=`<dt>Villkoren</dt><dd>${ok?"uppfylls":"uppfylls inte"}</dd>`}
   h+=`</dl>`;
+  if(w&&la!=null&&la>=0){const g=w.gust!=null?w.gust:w.ws;if(g>=10)h+=`<p class="warn">Byar upp till ${f0(g)} m/s. Även i lä kan byarna slå ner över öarna och ge kraftig drift och snabba vindkast vid båten.</p>`}
   if(W){h+=`<div class="hours">`;for(let i=S.ti;i<W.times.length&&i<S.ti+30;i+=3){const x=windAt(ll.lat,ll.lng,i);if(!x)continue;const d=new Date(W.times[i]);
       h+=`<div>${String(d.getHours()).padStart(2,"0")}<b>${dirName(x.wd)} ${f0(x.ws)}</b>${x.gust!=null?"("+f0(x.gust)+")":""}</div>`}h+=`</div>`}
   if(laR)h+=`<p class="note">Lä räknas från hur mycket öppet vatten som finns mot vinden (inom 6 km). Vågor böjer runt små öar, så verkligt lä är ofta något mindre än kartan visar.</p>`;
