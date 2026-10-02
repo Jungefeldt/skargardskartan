@@ -11,6 +11,7 @@ Kräver: pip install shapely pillow
 import json
 import math
 import sys
+import time
 import urllib.parse
 import urllib.request
 
@@ -22,14 +23,31 @@ from shapely.strtree import STRtree
 from common import BOUNDS, CACHE, MASK, MASK_ZOOMS
 
 
+SERVERS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+]
+
+
 def overpass(query):
-    req = urllib.request.Request(
-        "https://overpass-api.de/api/interpreter",
-        data=urllib.parse.urlencode({"data": query}).encode(),
-        headers={"User-Agent": "skargardskartan/1.0"},
-    )
-    with urllib.request.urlopen(req, timeout=900) as r:
-        return json.loads(r.read().decode("utf-8"))
+    """Provar flera Overpass-servrar och försöker igen om de är överbelastade."""
+    last = None
+    for attempt in range(4):
+        for url in SERVERS:
+            try:
+                req = urllib.request.Request(
+                    url,
+                    data=urllib.parse.urlencode({"data": query}).encode(),
+                    headers={"User-Agent": "skargardskartan/1.0"},
+                )
+                with urllib.request.urlopen(req, timeout=300) as r:
+                    return json.loads(r.read().decode("utf-8"))
+            except Exception as ex:  # noqa: BLE001
+                last = ex
+                print(f"    {url.split('/')[2]}: {ex}", flush=True)
+        time.sleep(30 * (attempt + 1))
+    raise RuntimeError(f"Ingen Overpass-server svarade: {last}")
 
 
 def coastlines():
@@ -38,9 +56,22 @@ def coastlines():
     if p.exists():
         data = json.loads(p.read_text())
     else:
-        s, w, n, e = BOUNDS[1], BOUNDS[0], BOUNDS[3], BOUNDS[2]
-        print("Hämtar kustlinje från OpenStreetMap ...", flush=True)
-        data = overpass(f'[out:json][timeout:900];way["natural"="coastline"]({s},{w},{n},{e});out geom;')
+        w, s, e, n = BOUNDS
+        print("Hämtar kustlinje från OpenStreetMap i delar ...", flush=True)
+        els, seen = [], set()
+        rows, cols = 3, 2   # mindre frågor klarar överbelastade servrar bättre
+        for i in range(rows):
+            for j in range(cols):
+                s1, n1 = s + (n - s) * i / rows, s + (n - s) * (i + 1) / rows
+                w1, e1 = w + (e - w) * j / cols, w + (e - w) * (j + 1) / cols
+                part = overpass(f'[out:json][timeout:300];way["natural"="coastline"]({s1},{w1},{n1},{e1});out geom;')
+                for el in part.get("elements", []):
+                    if el.get("id") not in seen:
+                        seen.add(el.get("id"))
+                        els.append(el)
+                print(f"  del {i * cols + j + 1}/{rows * cols}: {len(els)} kustlinjer hittills", flush=True)
+                time.sleep(5)
+        data = {"elements": els}
         p.write_text(json.dumps(data))
     lines = [
         LineString([(q["lon"], q["lat"]) for q in el["geometry"]])
