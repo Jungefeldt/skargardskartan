@@ -147,12 +147,8 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     const R=await region(mz,x0,y0,x1-x0,y1-y0);if(my!==seq)return;const N=R.W*R.H,WA=R.water;
     if(tintOn){const lc=LANDCOL[S.land];showCanvas(R,D=>{for(let i=0;i<N;i++){if(WA[i])continue;const p=i*4;D[p]=lc[0];D[p+1]=lc[1];D[p+2]=lc[2];D[p+3]=255}},"tint")}
     lastR=R;
-    // kustlinje: mörk kant på landsidan av strandlinjen, så att land och vatten aldrig flyter ihop
-    {const thick=map.getZoom()-mz<1;
-    showCanvas(R,D=>{const Wd=R.W;for(let y=2;y<R.H-2;y++)for(let x=2;x<Wd-2;x++){const i=y*Wd+x;if(WA[i])continue;let al=0;
-        if(WA[i-1]||WA[i+1]||WA[i-Wd]||WA[i+Wd])al=240;else if(WA[i-Wd-1]||WA[i-Wd+1]||WA[i+Wd-1]||WA[i+Wd+1])al=thick?220:150;
-        else if(thick&&(WA[i-2]||WA[i+2]||WA[i-2*Wd]||WA[i+2*Wd]))al=150;
-        if(al){const p=i*4;D[p]=20;D[p+1]=24;D[p+2]=28;D[p+3]=al}}},"coast")}
+    // kustlinje: skarp vektorlinje i skärmens upplösning, som på ett sjökort
+    await drawCoast();if(my!==seq)return;
     if(!haveLa&&!haveT&&!privOn){hideCanvas();laR=null;laT=null;drawArrows(uiBoxes());legend();if(sel)sheet();return}
     // lä
     // riktningen avrundas till 5 grader; samma vy och riktning återanvänder beräkningen (snabb uppspelning)
@@ -217,6 +213,40 @@ function zoneCands(R,ARR,mz,vx0,vy0,vx1,vy1,mk,minSize,sepPx,size){const sc=Math
       const px=vx0+ux*c+c/2,py=vy0+uy*c+c/2,ix=(oy+uy*c+(c>>1))*R.W+ox+ux*c+(c>>1),m=mk(cb[u],ix);if(!m)continue;
       out.push({ll:CRS.pointToLatLng(L.point(px,py),mz),html:m.html,w:m.w,h:m.h,score:dist[u]});if(picked.length>=4)break}}
   return out}
+// Kustlinjen räknas fram ur masken med "marching squares" och ritas som en tunn linje.
+// Masken hämtas i så hög upplösning som zoomen kräver (upp till ca 10 m per punkt).
+const MS=[[],[[0,.5,.5,1]],[[.5,1,1,.5]],[[0,.5,1,.5]],[[.5,0,1,.5]],[[.5,0,0,.5],[.5,1,1,.5]],[[.5,0,.5,1]],[[.5,0,0,.5]],
+  [[.5,0,0,.5]],[[.5,0,.5,1]],[[.5,0,1,.5],[0,.5,.5,1]],[[.5,0,1,.5]],[[0,.5,1,.5]],[[.5,1,1,.5]],[[0,.5,.5,1]],[]];
+async function drawCoast(){const zz=map.getZoom(),cz=Math.min(13,Math.max(11,zz)),bnd=map.getBounds().pad(.04),
+  nw=CRS.latLngToPoint(bnd.getNorthWest(),cz),se=CRS.latLngToPoint(bnd.getSouthEast(),cz),x0=Math.floor(nw.x),y0=Math.floor(nw.y),W=Math.ceil(se.x)-x0,H=Math.ceil(se.y)-y0;
+  const R=await region(cz,x0,y0,W,H),WA=R.water,dpr=window.devicePixelRatio||1;
+  let k=Math.pow(2,zz-cz)*dpr;k=Math.min(k,4096/W,4096/H);
+  const b=L.latLngBounds(CRS.pointToLatLng(L.point(x0,y0+H),cz),CRS.pointToLatLng(L.point(x0+W,y0),cz));
+  let o=overlays.coast;if(!o){o=overlays.coast=new CanvasOverlay("",b,{pane:"coast",interactive:false}).addTo(map)}else o.setBounds(b);
+  const c=o.getElement();c.width=Math.round(W*k);c.height=Math.round(H*k);const x=c.getContext("2d");x.clearRect(0,0,c.width,c.height);
+  // 1) linjebitar mellan kantmittpunkter (koordinater i halva maskpunkter, som heltal)
+  const segs=[];for(let y=0;y<H-1;y++){const r0=y*W,r1=r0+W;for(let xx=0;xx<W-1;xx++){
+      const cs=(WA[r0+xx]?0:8)|(WA[r0+xx+1]?0:4)|(WA[r1+xx+1]?0:2)|(WA[r1+xx]?0:1);if(cs===0||cs===15)continue;
+      for(const s of MS[cs])segs.push(2*xx+1+2*s[0],2*y+1+2*s[1],2*xx+1+2*s[2],2*y+1+2*s[3])}}
+  // 2) koppla ihop bitarna till sammanhängande linjer
+  const KEY=p=>p[0]*65536+p[1],adj=new Map(),n=segs.length/4,used=new Uint8Array(n);
+  for(let i=0;i<n;i++)for(const e of [0,2]){const kk=segs[i*4+e]*65536+segs[i*4+e+1];let l=adj.get(kk);if(!l)adj.set(kk,l=[]);l.push(i)}
+  const lines=[];
+  for(let i=0;i<n;i++){if(used[i])continue;used[i]=1;let pts=[[segs[i*4],segs[i*4+1]],[segs[i*4+2],segs[i*4+3]]];
+    for(const dir of [1,0]){for(;;){const end=dir?pts[pts.length-1]:pts[0],l=adj.get(KEY(end));let nx=-1;if(l)for(const j of l)if(!used[j]){nx=j;break}if(nx<0)break;used[nx]=1;
+        const a2=[segs[nx*4],segs[nx*4+1]],b2=[segs[nx*4+2],segs[nx*4+3]],other=(a2[0]===end[0]&&a2[1]===end[1])?b2:a2;if(dir)pts.push(other);else pts.unshift(other)}}
+    lines.push(pts)}
+  // 3) jämna ut trappstegen och rita
+  const smooth=p=>{if(p.length<3)return p;const closed=p[0][0]===p[p.length-1][0]&&p[0][1]===p[p.length-1][1],o=[];if(!closed)o.push(p[0]);
+    for(let i=0;i<p.length-1;i++){const a3=p[i],b3=p[i+1];o.push([.75*a3[0]+.25*b3[0],.75*a3[1]+.25*b3[1]],[.25*a3[0]+.75*b3[0],.25*a3[1]+.75*b3[1]])}
+    if(closed)o.push(o[0]);else o.push(p[p.length-1]);return o};
+  x.lineWidth=1.5*dpr;x.lineJoin="round";x.lineCap="round";x.strokeStyle="#15191D";x.beginPath();const h=k/2;
+  // glidande medelvärde över några punkter tar bort trappstegen, Chaikin rundar av
+  const avg=(p,r)=>{const L2=p.length;if(L2<2*r+2)return p;const closed=p[0][0]===p[L2-1][0]&&p[0][1]===p[L2-1][1],o=[];
+    for(let i=0;i<L2;i++){let sx=0,sy=0,c2=0;for(let j=-r;j<=r;j++){let q=i+j;if(closed){q=(q+L2-1)%(L2-1)}else{if(q<0||q>=L2)continue}sx+=p[q][0];sy+=p[q][1];c2++}o.push([sx/c2,sy/c2])}
+    if(!closed){o[0]=p[0];o[L2-1]=p[L2-1]}return o};
+  for(let p of lines){p=smooth(avg(p,3));x.moveTo(p[0][0]*h,p[0][1]*h);for(let i=1;i<p.length;i++)x.lineTo(p[i][0]*h,p[i][1]*h)}
+  x.stroke()}
 // Ytor som täcks av tidsraden, knapparna och panelen, så att inga etiketter hamnar under dem.
 function uiBoxes(){const m=$("map").getBoundingClientRect(),out=[];
   document.querySelectorAll(".bar,.side,.panel:not(.hidden),.sheet.open,.leaflet-control-scale,.leaflet-control-attribution").forEach(el=>{const r=el.getBoundingClientRect();if(r.width&&r.height)out.push([r.left-m.left,r.top-m.top,r.right-m.left,r.bottom-m.top])});return out}
