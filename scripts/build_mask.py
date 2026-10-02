@@ -22,6 +22,11 @@ from shapely.strtree import STRtree
 
 from common import BOUNDS, CACHE, MASK, MASK_ZOOMS
 
+PRIV = MASK / "privat"   # ligger i mask-mappen så att den sparas av flödet
+PRIV_ZOOMS = range(11, 14)
+PRIV_M = 25          # avstånd från brygga eller hus som räknas som hemfridszon
+HOUSE_HALF_M = 6     # ungefärlig halv husbredd (hus hämtas som mittpunkt)
+
 
 SERVERS = [
     "https://overpass-api.de/api/interpreter",
@@ -140,12 +145,113 @@ def render(polys, z):
     return count
 
 
+def private_features():
+    """Hus och bryggor nära stranden från OpenStreetMap. Hus hämtas som mittpunkter
+    (litet svar), bryggor, kajer och vågbrytare med hela sin form."""
+    CACHE.mkdir(exist_ok=True)
+    p = CACHE / "private.json"
+    if p.exists():
+        return json.loads(p.read_text())
+    w, s, e, n = BOUNDS
+    houses, piers, seen = [], [], set()
+    rows, cols = 6, 4
+    print("Hämtar hus och bryggor nära stranden ...", flush=True)
+    for i in range(rows):
+        for j in range(cols):
+            s1, n1 = s + (n - s) * i / rows, s + (n - s) * (i + 1) / rows
+            w1, e1 = w + (e - w) * j / cols, w + (e - w) * (j + 1) / cols
+            bb = f"({s1},{w1},{n1},{e1})"
+            q = f"""[out:json][timeout:300];
+way["natural"="coastline"]{bb}->.c;
+(
+  way(around.c:60)["building"];
+  relation(around.c:60)["building"];
+  node(around.c:60)["leisure"="slipway"];
+)->.h;
+.h out center qt;
+(
+  way(around.c:60)["man_made"~"^(pier|quay|breakwater|groyne)$"];
+  way(around.c:60)["leisure"="marina"];
+)->.p;
+.p out geom qt;"""
+            for el in overpass(q).get("elements", []):
+                key = (el.get("type"), el.get("id"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                if el.get("geometry"):
+                    piers.append([[round(g["lon"], 6), round(g["lat"], 6)] for g in el["geometry"]])
+                elif "center" in el:
+                    houses.append([round(el["center"]["lon"], 6), round(el["center"]["lat"], 6)])
+                elif "lat" in el:
+                    houses.append([round(el["lon"], 6), round(el["lat"], 6)])
+            print(f"  del {i * cols + j + 1}/{rows * cols}: {len(houses)} hus, {len(piers)} bryggor", flush=True)
+            time.sleep(3)
+    data = {"houses": houses, "piers": piers}
+    p.write_text(json.dumps(data))
+    return data
+
+
+def render_private(feat, z):
+    """Ritar zonen runt hus och bryggor. Bara rutor med innehåll sparas."""
+    w, s, e, n = BOUNDS
+    x0, y0 = world_px(w, n, z)
+    x1, y1 = world_px(e, s, z)
+    tx0, ty0, tx1, ty1 = int(x0 // 256), int(y0 // 256), int(x1 // 256), int(y1 // 256)
+    ox, oy = tx0 * 256, ty0 * 256
+    W, H = (tx1 - tx0 + 1) * 256, (ty1 - ty0 + 1) * 256
+    lat_mid = (s + n) / 2
+    mpp = 156543.034 * math.cos(math.radians(lat_mid)) / 2 ** z
+    img = Image.new("1", (W, H), 0)
+    d = ImageDraw.Draw(img)
+    rh = (PRIV_M + HOUSE_HALF_M) / mpp
+    for lo, la in feat["houses"]:
+        px, py = world_px(lo, la, z)
+        px, py = px - ox, py - oy
+        d.ellipse([px - rh, py - rh, px + rh, py + rh], fill=1)
+    rp = PRIV_M / mpp
+    for line in feat["piers"]:
+        pts = [(px - ox, py - oy) for px, py in (world_px(lo, la, z) for lo, la in line)]
+        if len(pts) > 1:
+            d.line(pts, fill=1, width=max(1, int(round(2 * rp))))
+        for px, py in pts:
+            d.ellipse([px - rp, py - rp, px + rp, py + rp], fill=1)
+    count = 0
+    for tx in range(tx0, tx1 + 1):
+        for ty in range(ty0, ty1 + 1):
+            tile = img.crop(((tx - tx0) * 256, (ty - ty0) * 256, (tx - tx0 + 1) * 256, (ty - ty0 + 1) * 256))
+            if not tile.getbbox():
+                continue
+            out = PRIV / str(z) / str(tx)
+            out.mkdir(parents=True, exist_ok=True)
+            tile.save(out / f"{ty}.png", optimize=True)
+            count += 1
+    return count
+
+
+def build_private():
+    try:
+        feat = private_features()
+    except Exception as ex:  # noqa: BLE001
+        print(f"Hus och bryggor kunde inte hämtas ({ex}), hoppar över hemfridszoner den här gången")
+        return
+    PRIV.mkdir(parents=True, exist_ok=True)
+    for z in PRIV_ZOOMS:
+        print(f"  hemfridszon zoom {z}: {render_private(feat, z)} rutor", flush=True)
+    (PRIV / "info.json").write_text(json.dumps({"bounds": BOUNDS, "zooms": list(PRIV_ZOOMS), "meter": PRIV_M,
+                                                 "hus": len(feat["houses"]), "bryggor": len(feat["piers"])}))
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "privat":
+        build_private()
+        return
     polys = water_polygons(coastlines())
     for z in MASK_ZOOMS:
         n = render(polys, z)
         print(f"  zoom {z}: {n} rutor", flush=True)
     (MASK / "info.json").write_text(json.dumps({"bounds": BOUNDS, "zooms": list(MASK_ZOOMS)}))
+    build_private()
     print("Klart.")
 
 
