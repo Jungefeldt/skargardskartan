@@ -73,3 +73,4 @@ input[type=range]{width:100%;accent-color:var(--accent);height:30px;margin:2px 0
 .deftab th{color:var(--muted);font-weight:500}
 .deftab i{display:inline-block;width:14px;height:10px;border-radius:3px;border:1px solid rgba(0,0,0,.2);margin-right:6px;vertical-align:-1px}
 .warn{background:rgba(228,110,52,.14);border-left:3px solid #E46E34;padding:6px 8px;border-radius:6px;font-size:13px;margin-top:8px}
+.arrow em{display:block;font:italic 600 11px system-ui,sans-serif;color:#14222B;margin-top:-1px}

@@ -71,19 +71,27 @@ const LA_DEF=[["under 0,1 m","Blankt eller små krusningar. Båten ligger still,
 const WIND_TERMS=[[0.3,"Lugnt"],[4,"Svag vind"],[8,"Måttlig vind"],[14,"Frisk vind"],[20,"Hård vind"],[25,"Mycket hård vind"],[33,"Storm"],[999,"Orkan"]];
 const windTerm=v=>v==null?"":WIND_TERMS.find(x=>v<x[0])[1];
 const LA_RGBA=LA_CLASSES.map(c=>c[2].match(/[\d.]+/g).map(Number));
-let laR=null,laF=null,laWind=null;
+let laR=null,laF=null,laWind=null,laU=null,fetchCache={key:null,F:null};
 
 // ------------------------------------------------------------------ vind på en plats och tid
-function windAt(lat,lon,ti){const W=S.wind;if(!W)return null;let sw=0,su=0,sv=0,sg=0,sgw=0,st=0,stw=0,sp=0,spw=0,best=null,bd=1e9;
-  const ki=k=>W.keys.indexOf(k);
-  W.points.forEach((p,i)=>{const r=W.series[i][ti];if(!r)return;const dx=(p[1]-lon)*Math.cos(lat*Math.PI/180),dy=p[0]-lat,d=dx*dx+dy*dy;
-    if(d<bd){bd=d;best=r}if(d>0.09)return;const w=1/(d+1e-5),ws=r[ki("ws")],wd=r[ki("wd")];if(ws==null||wd==null)return;
-    const a=wd*Math.PI/180;su+=w*ws*Math.sin(a);sv+=w*ws*Math.cos(a);sw+=w;
-    if(r[ki("gust")]!=null){sg+=w*r[ki("gust")];sgw+=w}if(r[ki("t")]!=null){st+=w*r[ki("t")];stw+=w}if(r[ki("pr")]!=null){sp+=w*r[ki("pr")];spw+=w}});
-  if(!sw){if(!best)return null;return{ws:best[ki("ws")],wd:best[ki("wd")],gust:best[ki("gust")],t:best[ki("t")],pr:best[ki("pr")]}}
+let KI=null;
+function windAt(lat,lon,ti){const W=S.wind;if(!W)return null;if(!KI)KI={ws:W.keys.indexOf("ws"),wd:W.keys.indexOf("wd"),gust:W.keys.indexOf("gust"),t:W.keys.indexOf("t"),pr:W.keys.indexOf("pr")};
+  let sw=0,su=0,sv=0,sg=0,sgw=0,st=0,stw=0,sp=0,spw=0,best=null,bd=1e9;const cl=Math.cos(lat*Math.PI/180),P=W.points,SR=W.series;
+  for(let i=0;i<P.length;i++){const r=SR[i][ti];if(!r)continue;const p=P[i],dx=(p[1]-lon)*cl,dy=p[0]-lat,d=dx*dx+dy*dy;
+    if(d<bd){bd=d;best=r}if(d>0.09)continue;const ws=r[KI.ws],wd=r[KI.wd];if(ws==null||wd==null)continue;const w=1/(d+1e-5),a=wd*Math.PI/180;
+    su+=w*ws*Math.sin(a);sv+=w*ws*Math.cos(a);sw+=w;const g=r[KI.gust],tt=r[KI.t],pp=r[KI.pr];
+    if(g!=null){sg+=w*g;sgw+=w}if(tt!=null){st+=w*tt;stw+=w}if(pp!=null){sp+=w*pp;spw+=w}}
+  if(!sw){if(!best)return null;return{ws:best[KI.ws],wd:best[KI.wd],gust:best[KI.gust],t:best[KI.t],pr:best[KI.pr]}}
   const ws=Math.hypot(su,sv)/sw;let wd=Math.atan2(su,sv)*180/Math.PI;if(wd<0)wd+=360;
   return{ws,wd,gust:sgw?sg/sgw:null,t:stw?st/stw:null,pr:spw?sp/spw:null}}
 function currentWind(){if(S.src==="egen")return{ws:S.own.sp,wd:S.own.dir,gust:null};const c=map.getCenter();return windAt(c.lat,c.lng,S.ti)}
+// Riktningen som lä räknas för: medel för hela området vid vald tid, så att resultatet
+// inte ändras när kartan flyttas eller zoomas.
+const domCache={};
+function domainWind(ti){if(S.src==="egen")return{ws:S.own.sp,wd:S.own.dir,gust:null};const W=S.wind;if(!W)return null;const k=ti;if(domCache[k])return domCache[k];
+  const ki=x=>W.keys.indexOf(x);let su=0,sv=0,n=0,sw=0,sg=0,ng=0;
+  W.series.forEach(row=>{const r=row[ti];if(!r||r[ki("ws")]==null||r[ki("wd")]==null)return;const a=r[ki("wd")]*Math.PI/180;su+=r[ki("ws")]*Math.sin(a);sv+=r[ki("ws")]*Math.cos(a);sw+=r[ki("ws")];n++;if(r[ki("gust")]!=null){sg+=r[ki("gust")];ng++}});
+  if(!n)return null;let wd=Math.atan2(su,sv)*180/Math.PI;if(wd<0)wd+=360;return domCache[k]={ws:sw/n,wd,gust:ng?sg/ng:null}}
 // byar eller medelvind (egen vind räknas alltid som angiven styrka)
 const calcU=w=>S.basis==="byar"&&w.gust!=null?Math.max(w.ws,w.gust):w.ws;
 const DIR16=["N","NNO","NO","ONO","O","OSO","SO","SSO","S","SSV","SV","VSV","V","VNV","NV","NNV"];
@@ -118,10 +126,10 @@ let seq=0,busy=false,again=false;
 async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
   try{lblLayer.clearLayers();zoneLayer.clearLayers();
     const Lyr=S.layers,F_=S.find,needLa=Lyr.la||F_.on,needT=Lyr.temp||F_.on,di=needT?tempDay():-1;
-    const haveT=needT&&di>=0&&S.temp,w=needLa?currentWind():null,haveLa=needLa&&w&&w.ws!=null;
+    const haveT=needT&&di>=0&&S.temp,w=needLa?domainWind(S.ti):null,haveLa=needLa&&w&&w.ws!=null;
     const tintOn=S.land!=="karta";if(!tintOn)hideCanvas("tint");
     if(!haveLa&&!haveT&&!tintOn){hideCanvas();laR=null;laT=null;drawArrows();legend();if(sel)sheet();return}
-    const zz=map.getZoom(),mz=Math.max(9,zz<=11?zz:zz<=13?zz-1:13),b=map.getBounds(),nw=CRS.latLngToPoint(b.getNorthWest(),mz),se=CRS.latLngToPoint(b.getSouthEast(),mz);
+    const zz=map.getZoom(),mz=zz<=10?11:zz<=13?12:13,b=map.getBounds(),nw=CRS.latLngToPoint(b.getNorthWest(),mz),se=CRS.latLngToPoint(b.getSouthEast(),mz);
     let x0=Math.floor(nw.x),y0=Math.floor(nw.y),x1=Math.ceil(se.x),y1=Math.ceil(se.y);const vx0=x0,vy0=y0,vx1=x1,vy1=y1;
     const m=mpp(mz,map.getCenter().lat),cap=CAP_M/m;
     if(haveLa){const th=w.wd*Math.PI/180,ux=Math.sin(th),uy=-Math.cos(th);if(ux>-0.4)x1+=cap;if(ux<0.4)x0-=cap;if(uy<0.4)y0-=cap;if(uy>-0.4)y1+=cap;
@@ -130,8 +138,15 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     if(tintOn){const lc=LANDCOL[S.land];showCanvas(R,D=>{for(let i=0;i<N;i++){if(WA[i])continue;const p=i*4;D[p]=lc[0];D[p+1]=lc[1];D[p+2]=lc[2];D[p+3]=255}},"tint")}
     if(!haveLa&&!haveT){hideCanvas();laR=null;laT=null;drawArrows();legend();if(sel)sheet();return}
     // lä
-    let F=null;if(haveLa){const A=fetchPass(R,w.wd-20,cap),B=fetchPass(R,w.wd,cap),C=fetchPass(R,w.wd+20,cap);F=new Float32Array(N);for(let i=0;i<N;i++)F[i]=(A[i]+2*B[i]+C[i])/4*m}
-    laR=haveLa?R:null;laF=F;laWind=haveLa?w:null;const U=haveLa?calcU(w):0;
+    // riktningen avrundas till 5 grader; samma vy och riktning återanvänder beräkningen (snabb uppspelning)
+    let F=null;if(haveLa){const dr=Math.round(w.wd/5)*5,key=[mz,R.px0,R.py0,R.W,R.H,dr].join("|");
+      if(fetchCache.key===key)F=fetchCache.F;else{const A=fetchPass(R,dr-20,cap),B=fetchPass(R,dr,cap),C=fetchPass(R,dr+20,cap);F=new Float32Array(N);for(let i=0;i<N;i++)F[i]=(A[i]+2*B[i]+C[i])/4*m;fetchCache={key,F}}}
+    laR=haveLa?R:null;laF=F;laWind=haveLa?w:null;
+    let UF=null;if(haveLa){UF=new Float32Array(N);if(S.src==="egen")UF.fill(S.own.sp);else{const st=64,gw=Math.ceil(R.W/st)+1,gh=Math.ceil(R.H/st)+1,G2=new Float32Array(gw*gh);
+        for(let gy=0;gy<gh;gy++)for(let gx=0;gx<gw;gx++){const ll=CRS.pointToLatLng(L.point(R.px0+gx*st,R.py0+gy*st),mz),lw=windAt(ll.lat,ll.lng,S.ti);G2[gy*gw+gx]=lw&&lw.ws!=null?calcU(lw):calcU(w)}
+        for(let y=0;y<R.H;y++){const fy=y/st,y0=fy|0,ty=fy-y0,y1=Math.min(gh-1,y0+1);for(let x=0;x<R.W;x++){const fx=x/st,x0=fx|0,tx=fx-x0,x1=Math.min(gw-1,x0+1);
+          UF[y*R.W+x]=(G2[y0*gw+x0]*(1-tx)+G2[y0*gw+x1]*tx)*(1-ty)+(G2[y1*gw+x0]*(1-tx)+G2[y1*gw+x1]*tx)*ty}}}}
+    laU=UF;
     // vattentemperatur per pixel
     let TV=null,BAND=null;
     if(haveT){const G=S.temp,T=S.TF,base=di*G.nx*G.ny,rowFy=new Float32Array(R.H),colFx=new Float32Array(R.W);TV=new Float32Array(N);
@@ -150,9 +165,9 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     // måla
     const showLa=haveLa&&Lyr.la,showT=haveT&&Lyr.temp,findOn=F_.on&&haveLa&&haveT;
     showCanvas(R,D=>{for(let i=0;i<N;i++){if(!WA[i])continue;const p=i*4;let r=0,g=0,bb=0,a=0;
-        if(findOn){let k=0;const h=wave(U,F[i]);while(h>=LA_CLASSES[k][0])k++;const tv=TV[i],ok=k<=F_.maxK&&tv>=F_.tmin&&tv<=F_.tmax;
+        if(findOn){let k=0;const h=wave(UF[i],F[i]);while(h>=LA_CLASSES[k][0])k++;const tv=TV[i],ok=k<=F_.maxK&&tv>=F_.tmin&&tv<=F_.tmax;
           if(ok){r=214;g=24;bb=138;a=170}else{r=70;g=80;bb=88;a=95}}
-        else if(showLa){let k=0;const h=wave(U,F[i]);while(h>=LA_CLASSES[k][0])k++;const c=LA_RGBA[k];r=c[0];g=c[1];bb=c[2];a=c[3]*255}
+        else if(showLa){let k=0;const h=wave(UF[i],F[i]);while(h>=LA_CLASSES[k][0])k++;const c=LA_RGBA[k];r=c[0];g=c[1];bb=c[2];a=c[3]*255}
         else if(showT){let k=Math.round(((BAND[i]+.5)*tStep)/24*255);k=k<0?0:k>255?255:k;r=TLUT[k*3];g=TLUT[k*3+1];bb=TLUT[k*3+2];a=150}
         D[p]=r;D[p+1]=g;D[p+2]=bb;D[p+3]=a}
       // zongränser för temperaturen, som djupkurvor
@@ -189,15 +204,15 @@ function drawArrows(){arrowLayer.clearLayers();if(!S.layers.arrows)return;
   W.points.forEach((p,i)=>{const r=W.series[i][S.ti];if(!r||r[ki("ws")]==null)return;const row=Math.round((p[0]-W.points[0][0])/0.1),col=Math.round((p[1]-W.points[0][1])/0.15);
     if(row%every||col%every)return;if(!b.contains(p))return;arrowAt(L.latLng(p[0],p[1]),r[ki("wd")],r[ki("ws")],r[ki("gust")])})}
 function arrowAt(ll,wd,ws,gust,big){const s=big?40:30;
-  const html=`<svg width="${s}" height="${s}" viewBox="-15 -15 30 30" style="transform:rotate(${wd+180}deg)"><path d="M0 -13 L7 3 L1.5 1 L1.5 12 L-1.5 12 L-1.5 1 L-7 3 Z" fill="#14222B" stroke="#fff" stroke-width="1.6" paint-order="stroke"/></svg><span>${f0(ws)}${gust!=null?" ("+f0(gust)+")":""}</span>`;
-  L.marker(ll,{pane:"lbl",interactive:false,keyboard:false,icon:L.divIcon({className:"arrow",html,iconSize:[60,s+16],iconAnchor:[30,s/2]})}).addTo(arrowLayer)}
+  const html=`<svg width="${s}" height="${s}" viewBox="-15 -15 30 30" style="transform:rotate(${wd+180}deg)"><path d="M0 -13 L7 3 L1.5 1 L1.5 12 L-1.5 12 L-1.5 1 L-7 3 Z" fill="#14222B" stroke="#fff" stroke-width="1.6" paint-order="stroke"/></svg><span>${f0(ws)}${gust!=null?" ("+f0(gust)+")":""}<em>${windTerm(ws).replace(" vind","").toLowerCase()}</em></span>`;
+  L.marker(ll,{pane:"lbl",interactive:false,keyboard:false,icon:L.divIcon({className:"arrow",html,iconSize:[76,s+30],iconAnchor:[38,s/2]})}).addTo(arrowLayer)}
 
 // ------------------------------------------------------------------ förklaring
-function legend(){const L_=$("legend"),w=laWind||currentWind();let h="";
+function legend(){const L_=$("legend"),w=laWind||domainWind(S.ti);let h="";
   if(S.find.on)h+=`<span><i style="background:rgba(214,24,138,.67)"></i>Uppfyller villkoren</span><span><i style="background:rgba(70,80,88,.37)"></i>Övrigt vatten</span>`;
   else if(S.layers.la)h+=LA_CLASSES.map(c=>`<span><i style="background:${c[2]}"></i>${c[1]}</span>`).join("");
   else if(S.layers.temp&&tRange)h+=`<div class="grad" style="background:linear-gradient(90deg,${TSTOPS.map(s=>s[1]+" "+(s[0]/24*100)+"%").join(",")})"></div><div class="gl"><span>0</span><span>6</span><span>12</span><span>18</span><span>24 °C</span></div>`;
-  if((S.layers.la||S.find.on)&&w)h=`<span><b>${dirName(w.wd)} ${f0(w.ws)} m/s${w.gust!=null?", byar "+f0(w.gust):""}</b>${S.src==="prognos"?" · räknat på "+(S.basis==="byar"&&w.gust!=null?"byar":"medelvind"):""}</span>`+h;
+  if((S.layers.la||S.find.on)&&w)h=`<span><b>${dirName(w.wd)} ${f0(w.ws)} m/s${w.gust!=null?", byar "+f0(w.gust):""}</b>${S.src==="prognos"?" (medel för området) · räknat på "+(S.basis==="byar"&&w.gust!=null?"byar":"medelvind"):""}</span>`+h;
   if((S.layers.temp||S.find.on)&&tRange)h+=`<span><i style="background:#0B3550;height:2px;border:0"></i>Vattentemp, zoner om ${fmtStep(tStep)} °C (${f1(tRange[0])} till ${f1(tRange[1])} här)</span>`;
   L_.innerHTML=h}
 
@@ -252,12 +267,13 @@ function laAt(ll){if(!laR||!laF)return null;const p=CRS.latLngToPoint(ll,laR.z),
 function sheet(){const ll=sel,W=S.wind,w=W?windAt(ll.lat,ll.lng,S.ti):null,di=tempDay(),wt=tempAt(ll.lat,ll.lng,di),la=laR?laAt(ll):null,lw=laWind;
   let h=`<h3>${fmtTime(W?W.times[S.ti]:new Date().toISOString())} · ${ll.lat.toFixed(4).replace(".",",")}° N ${ll.lng.toFixed(4).replace(".",",")}° E</h3>`;
   if(la===-1)h+=`<div class="big">Land</div>`;
-  else if(la!=null&&lw){const hs=wave(calcU(lw),la);let k=0;while(hs>=LA_CLASSES[k][0])k++;
+  const lu=S.src==="egen"?S.own.sp:w?calcU(w):lw?calcU(lw):null;
+  if(la===-1){h+=`<dl class="kv">`}else if(la!=null&&lu!=null){const hs=wave(lu,la);let k=0;while(hs>=LA_CLASSES[k][0])k++;
     h+=`<div class="big">${LA_CLASSES[k][1]} <small>ca ${f1(hs)} m våg</small></div><dl class="kv"><dt>Öppet vatten mot vinden</dt><dd>${la>=CAP_M*0.98?"över 6 km":la<1000?f0(la/10)*10+" m":f1(la/1000)+" km"}</dd>`;}
   else h+=`<dl class="kv">`;
   if(w)h+=`<dt>Vind${S.src==="egen"?" (prognos)":""}</dt><dd>${dirName(w.wd)} ${f0(w.ws)} m/s${w.gust!=null?", byar "+f0(w.gust):""} <span style="font-weight:500;color:var(--muted)">(${windTerm(w.ws).toLowerCase()})</span></dd><dt>Luft</dt><dd>${f1(w.t)} °C</dd><dt>Nederbörd</dt><dd>${f1(w.pr)} mm/h</dd>`;
   if(wt!=null)h+=`<dt>Vattentemp</dt><dd>${f1(wt)} °C</dd>`;
-  if(S.find.on&&la!=null&&la>=0&&lw&&wt!=null){let k=0;const hs=wave(calcU(lw),la);while(hs>=LA_CLASSES[k][0])k++;const ok=k<=S.find.maxK&&wt>=S.find.tmin&&wt<=S.find.tmax;h+=`<dt>Villkoren</dt><dd>${ok?"uppfylls":"uppfylls inte"}</dd>`}
+  if(S.find.on&&la!=null&&la>=0&&lu!=null&&wt!=null){let k=0;const hs=wave(lu,la);while(hs>=LA_CLASSES[k][0])k++;const ok=k<=S.find.maxK&&wt>=S.find.tmin&&wt<=S.find.tmax;h+=`<dt>Villkoren</dt><dd>${ok?"uppfylls":"uppfylls inte"}</dd>`}
   h+=`</dl>`;
   if(w&&la!=null&&la>=0){const g=w.gust!=null?w.gust:w.ws;if(g>=10)h+=`<p class="warn">Byar upp till ${f0(g)} m/s. Även i lä kan byarna slå ner över öarna och ge kraftig drift och snabba vindkast vid båten.</p>`}
   if(W){h+=`<div class="hours">`;for(let i=S.ti;i<W.times.length&&i<S.ti+30;i+=3){const x=windAt(ll.lat,ll.lng,i);if(!x)continue;const d=new Date(W.times[i]);
