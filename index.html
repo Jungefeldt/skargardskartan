@@ -31,6 +31,7 @@
 <section class="panel" id="panel">
   <div class="chips" role="group" aria-label="Skikt">
     <button class="chip" data-layer="la" aria-pressed="true">Lä</button>
+    <button class="chip" data-layer="waves" aria-pressed="true">Våghöjd</button>
     <button class="chip" data-layer="temp" aria-pressed="false">Vattentemp</button>
     <button class="chip" data-layer="arrows" aria-pressed="true">Vindpilar</button>
     <button class="chip find" id="findbtn" aria-pressed="false">Hitta plats</button>
@@ -43,8 +44,8 @@
         <button role="radio" data-maxk="2" aria-checked="false">Måttlig</button>
         <button role="radio" data-maxk="4" aria-checked="false">Valfri</button>
       </div></div>
-    <label class="sl">Vattentemp från <b id="tminv"></b><input type="range" id="tmin" min="0" max="24" step="0.1"></label>
-    <label class="sl">till <b id="tmaxv"></b><input type="range" id="tmax" min="0" max="24" step="0.1"></label>
+    <label class="sl">Vattentemp från <b id="tminv"></b><input type="range" id="tmin" min="0" max="24" step="1"></label>
+    <label class="sl">till <b id="tmaxv"></b><input type="range" id="tmax" min="0" max="24" step="1"></label>
   </div>
   <div class="frow"><span>Land</span>
     <div class="seg small" role="radiogroup" aria-label="Färg på land">
