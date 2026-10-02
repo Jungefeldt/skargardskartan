@@ -13,6 +13,7 @@ L.tileLayer("https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png",{maxZoom:18,a
 L.control.scale({imperial:false,position:"topleft"}).addTo(map);
 map.createPane("tint").style.zIndex=300; map.getPane("tint").style.pointerEvents="none"; map.getPane("tint").style.mixBlendMode="color";
 map.createPane("ov").style.zIndex=350; map.getPane("ov").style.pointerEvents="none";
+map.createPane("coast").style.zIndex=360; map.getPane("coast").style.pointerEvents="none";
 map.createPane("lbl").style.zIndex=640; map.getPane("lbl").style.pointerEvents="none";
 
 // Bild-lager vars innehåll ritas direkt i en canvas
@@ -138,7 +139,6 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     const haveT=needT&&di>=0&&S.temp,w=needLa?domainWind(S.ti):null,haveLa=needLa&&w&&w.ws!=null;
     const tintOn=S.land!=="karta";if(!tintOn)hideCanvas("tint");
     const privOn=S.privOk&&Lyr.priv;
-    if(!haveLa&&!haveT&&!tintOn&&!privOn){hideCanvas();laR=null;laT=null;drawArrows(uiBoxes());legend();if(sel)sheet();return}
     const zz=map.getZoom(),mz=zz<=10?11:zz<=13?12:13,b=map.getBounds(),nw=CRS.latLngToPoint(b.getNorthWest(),mz),se=CRS.latLngToPoint(b.getSouthEast(),mz);
     let x0=Math.floor(nw.x),y0=Math.floor(nw.y),x1=Math.ceil(se.x),y1=Math.ceil(se.y);const vx0=x0,vy0=y0,vx1=x1,vy1=y1;
     const m=mpp(mz,map.getCenter().lat),cap=CAP_M/m;
@@ -147,6 +147,12 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     const R=await region(mz,x0,y0,x1-x0,y1-y0);if(my!==seq)return;const N=R.W*R.H,WA=R.water;
     if(tintOn){const lc=LANDCOL[S.land];showCanvas(R,D=>{for(let i=0;i<N;i++){if(WA[i])continue;const p=i*4;D[p]=lc[0];D[p+1]=lc[1];D[p+2]=lc[2];D[p+3]=255}},"tint")}
     lastR=R;
+    // kustlinje: mörk kant på landsidan av strandlinjen, så att land och vatten aldrig flyter ihop
+    {const thick=map.getZoom()-mz<1;
+    showCanvas(R,D=>{const Wd=R.W;for(let y=2;y<R.H-2;y++)for(let x=2;x<Wd-2;x++){const i=y*Wd+x;if(WA[i])continue;let al=0;
+        if(WA[i-1]||WA[i+1]||WA[i-Wd]||WA[i+Wd])al=240;else if(WA[i-Wd-1]||WA[i-Wd+1]||WA[i+Wd-1]||WA[i+Wd+1])al=thick?220:150;
+        else if(thick&&(WA[i-2]||WA[i+2]||WA[i-2*Wd]||WA[i+2*Wd]))al=150;
+        if(al){const p=i*4;D[p]=20;D[p+1]=24;D[p+2]=28;D[p+3]=al}}},"coast")}
     if(!haveLa&&!haveT&&!privOn){hideCanvas();laR=null;laT=null;drawArrows(uiBoxes());legend();if(sel)sheet();return}
     // lä
     // riktningen avrundas till 5 grader; samma vy och riktning återanvänder beräkningen (snabb uppspelning)
