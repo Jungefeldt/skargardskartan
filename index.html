@@ -22,6 +22,7 @@
     <button class="btn" id="prev" aria-label="Bakåt i tiden">‹</button>
     <div class="when" id="when" aria-live="polite">Laddar …</div>
     <button class="btn" id="next" aria-label="Framåt i tiden">›</button>
+    <button class="btn" id="play" aria-label="Spela upp prognosen">▶</button>
     <button class="btn" id="now">Nu</button>
   </div>
   <input type="range" id="time" aria-label="Välj tid" min="0" max="0" value="0">
@@ -45,6 +46,12 @@
     <label class="sl">Vattentemp från <b id="tminv"></b><input type="range" id="tmin" min="0" max="24" step="0.1"></label>
     <label class="sl">till <b id="tmaxv"></b><input type="range" id="tmax" min="0" max="24" step="0.1"></label>
   </div>
+  <div class="frow"><span>Land</span>
+    <div class="seg small" role="radiogroup" aria-label="Färg på land">
+      <button role="radio" data-land="gul" aria-checked="true">Gult</button>
+      <button role="radio" data-land="vit" aria-checked="false">Vitt</button>
+      <button role="radio" data-land="karta" aria-checked="false">Karta</button>
+    </div></div>
   <div class="frow"><span>Vind</span>
     <div class="seg small" role="radiogroup" aria-label="Vindkälla">
       <button role="radio" data-src="prognos" aria-checked="true">Prognos</button>

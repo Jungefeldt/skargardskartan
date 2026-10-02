@@ -11,19 +11,21 @@ map.attributionControl.setPrefix(false);
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(map);
 L.tileLayer("https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png",{maxZoom:18,attribution:"Sjömärken © OpenSeaMap · SMHI · Copernicus Marine"}).addTo(map);
 L.control.scale({imperial:false,position:"topleft"}).addTo(map);
+map.createPane("tint").style.zIndex=300; map.getPane("tint").style.pointerEvents="none"; map.getPane("tint").style.mixBlendMode="color";
 map.createPane("ov").style.zIndex=350; map.getPane("ov").style.pointerEvents="none";
 map.createPane("lbl").style.zIndex=640; map.getPane("lbl").style.pointerEvents="none";
 
 // Bild-lager vars innehåll ritas direkt i en canvas
 const CanvasOverlay=L.ImageOverlay.extend({_initImage(){const c=this._image=L.DomUtil.create("canvas","leaflet-image-layer overlay"+(this._zoomAnimated?" leaflet-zoom-animated":""));c.onselectstart=L.Util.falseFn;c.onmousemove=L.Util.falseFn}});
-let overlay=null;
-function showCanvas(R,draw){const b=L.latLngBounds(CRS.pointToLatLng(L.point(R.px0,R.py0+R.H),R.z),CRS.pointToLatLng(L.point(R.px0+R.W,R.py0),R.z));
-  if(!overlay){overlay=new CanvasOverlay("",b,{pane:"ov",interactive:false,opacity:1}).addTo(map)}else overlay.setBounds(b);
-  const c=overlay.getElement();c.width=R.W;c.height=R.H;const x=c.getContext("2d"),img=x.createImageData(R.W,R.H);draw(img.data);x.putImageData(img,0,0)}
-function hideCanvas(){if(overlay){map.removeLayer(overlay);overlay=null}}
+const overlays={};
+function showCanvas(R,draw,pane){pane=pane||"ov";const b=L.latLngBounds(CRS.pointToLatLng(L.point(R.px0,R.py0+R.H),R.z),CRS.pointToLatLng(L.point(R.px0+R.W,R.py0),R.z));
+  let o=overlays[pane];if(!o){o=overlays[pane]=new CanvasOverlay("",b,{pane,interactive:false,opacity:1}).addTo(map)}else o.setBounds(b);
+  const c=o.getElement();c.width=R.W;c.height=R.H;const x=c.getContext("2d"),img=x.createImageData(R.W,R.H);draw(img.data);x.putImageData(img,0,0)}
+function hideCanvas(pane){pane=pane||"ov";if(overlays[pane]){map.removeLayer(overlays[pane]);delete overlays[pane]}}
+const LANDCOL={gul:[244,226,160],vit:[246,246,242]};
 
 // ------------------------------------------------------------------ data
-const S={wind:null,temp:null,T:null,layers:{la:true,temp:false,arrows:true},find:{on:false,maxK:0,tmin:null,tmax:null},src:"prognos",own:{dir:225,sp:8},ti:0};
+const S={land:"gul",wind:null,temp:null,T:null,layers:{la:true,temp:false,arrows:true},find:{on:false,maxK:0,tmin:null,tmax:null},src:"prognos",own:{dir:225,sp:8},ti:0};
 async function getJSON(u){const r=await fetch(u,{cache:"no-cache"});if(!r.ok)throw new Error(u+" "+r.status);return r.json()}
 
 // ------------------------------------------------------------------ land/vatten-mask
@@ -59,7 +61,7 @@ function fetchPass(R,dirDeg,capPx){const W=R.W,H=R.H,wa=R.water,F=new Float32Arr
 const CAP_M=6000;
 // Våghöjd vid begränsat öppet vatten (JONSWAP), max fullt utvecklad sjö
 const wave=(U,F)=>Math.min(0.000511*U*Math.sqrt(F),0.0214*U*U);
-const LA_CLASSES=[[0.1,"Lä","rgba(46,139,87,.55)"],[0.25,"Krusning","rgba(154,205,50,.5)"],[0.5,"Måttlig sjö","rgba(240,196,25,.55)"],[1,"Grov sjö","rgba(230,126,34,.6)"],[99,"Hård sjö","rgba(192,57,43,.62)"]];
+const LA_CLASSES=[[0.1,"Lä","rgba(23,84,166,.62)"],[0.25,"Krusning","rgba(96,170,222,.55)"],[0.5,"Måttlig sjö","rgba(150,110,205,.6)"],[1,"Grov sjö","rgba(228,110,52,.65)"],[99,"Hård sjö","rgba(190,38,44,.68)"]];
 const LA_RGBA=LA_CLASSES.map(c=>c[2].match(/[\d.]+/g).map(Number));
 let laR=null,laF=null,laWind=null;
 
@@ -107,13 +109,16 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
   try{lblLayer.clearLayers();zoneLayer.clearLayers();
     const Lyr=S.layers,F_=S.find,needLa=Lyr.la||F_.on,needT=Lyr.temp||F_.on,di=needT?tempDay():-1;
     const haveT=needT&&di>=0&&S.temp,w=needLa?currentWind():null,haveLa=needLa&&w&&w.ws!=null;
-    if(!haveLa&&!haveT){hideCanvas();laR=null;laT=null;drawArrows();legend();if(sel)sheet();return}
+    const tintOn=S.land!=="karta";if(!tintOn)hideCanvas("tint");
+    if(!haveLa&&!haveT&&!tintOn){hideCanvas();laR=null;laT=null;drawArrows();legend();if(sel)sheet();return}
     const zz=map.getZoom(),mz=Math.max(9,zz<=11?zz:zz<=13?zz-1:13),b=map.getBounds(),nw=CRS.latLngToPoint(b.getNorthWest(),mz),se=CRS.latLngToPoint(b.getSouthEast(),mz);
     let x0=Math.floor(nw.x),y0=Math.floor(nw.y),x1=Math.ceil(se.x),y1=Math.ceil(se.y);const vx0=x0,vy0=y0,vx1=x1,vy1=y1;
     const m=mpp(mz,map.getCenter().lat),cap=CAP_M/m;
     if(haveLa){const th=w.wd*Math.PI/180,ux=Math.sin(th),uy=-Math.cos(th);if(ux>-0.4)x1+=cap;if(ux<0.4)x0-=cap;if(uy<0.4)y0-=cap;if(uy>-0.4)y1+=cap;
       x0=Math.floor(x0);y0=Math.floor(y0);x1=Math.ceil(x1);y1=Math.ceil(y1)}
     const R=await region(mz,x0,y0,x1-x0,y1-y0);if(my!==seq)return;const N=R.W*R.H,WA=R.water;
+    if(tintOn){const lc=LANDCOL[S.land];showCanvas(R,D=>{for(let i=0;i<N;i++){if(WA[i])continue;const p=i*4;D[p]=lc[0];D[p+1]=lc[1];D[p+2]=lc[2];D[p+3]=255}},"tint")}
+    if(!haveLa&&!haveT){hideCanvas();laR=null;laT=null;drawArrows();legend();if(sel)sheet();return}
     // lä
     let F=null;if(haveLa){const A=fetchPass(R,w.wd-20,cap),B=fetchPass(R,w.wd,cap),C=fetchPass(R,w.wd+20,cap);F=new Float32Array(N);for(let i=0;i<N;i++)F[i]=(A[i]+2*B[i]+C[i])/4*m}
     laR=haveLa?R:null;laF=F;laWind=haveLa?w:null;
@@ -194,8 +199,14 @@ function setTime(i){const W=S.wind;if(!W)return;S.ti=Math.max(0,Math.min(W.times
   const t=new Date(W.times[S.ti]),fc=t.getTime()>Date.now()+30*6e4,past=t.getTime()<Date.now()-90*6e4;
   $("when").innerHTML=fmtTime(W.times[S.ti])+`<small class="${fc?"fc":""}">${fc?"prognos":past?"tidigare":"nu"}</small>`;
   schedule()}
-$("time").oninput=e=>setTime(+e.target.value);
-$("prev").onclick=()=>setTime(S.ti-1);$("next").onclick=()=>setTime(S.ti+1);$("now").onclick=()=>setTime(nowIndex());
+$("time").oninput=e=>{stopPlay();setTime(+e.target.value)};
+let playT=null;
+function stopPlay(){if(playT){clearInterval(playT);playT=null;$("play").textContent="▶";$("play").setAttribute("aria-label","Spela upp prognosen")}}
+$("play").onclick=()=>{if(playT){stopPlay();return}const W=S.wind;if(!W)return;
+  if(S.ti>=W.times.length-1)setTime(nowIndex());
+  $("play").textContent="❚❚";$("play").setAttribute("aria-label","Pausa");
+  playT=setInterval(()=>{if(S.ti>=S.wind.times.length-1){setTime(nowIndex());return}setTime(S.ti+1)},700)};
+$("prev").onclick=()=>{stopPlay();setTime(S.ti-1)};$("next").onclick=()=>{stopPlay();setTime(S.ti+1)};$("now").onclick=()=>{stopPlay();setTime(nowIndex())};
 
 // ------------------------------------------------------------------ kontroller
 document.querySelectorAll("[data-layer]").forEach(b=>b.onclick=()=>{const k=b.dataset.layer;S.layers[k]=!S.layers[k];b.setAttribute("aria-pressed",S.layers[k]);if(k==="arrows")drawArrows();else schedule()});
@@ -204,6 +215,8 @@ document.querySelectorAll("[data-maxk]").forEach(b=>b.onclick=()=>{S.find.maxK=+
 function syncFind(){$("tmin").value=S.find.tmin;$("tmax").value=S.find.tmax;$("tminv").textContent=f1(S.find.tmin)+" °C";$("tmaxv").textContent=f1(S.find.tmax)+" °C"}
 $("tmin").oninput=e=>{S.find.tmin=Math.min(+e.target.value,S.find.tmax);syncFind();schedule()};
 $("tmax").oninput=e=>{S.find.tmax=Math.max(+e.target.value,S.find.tmin);syncFind();schedule()};
+document.querySelectorAll("[data-land]").forEach(b=>b.onclick=()=>{S.land=b.dataset.land;document.querySelectorAll("[data-land]").forEach(x=>x.setAttribute("aria-checked",x===b));try{localStorage.setItem("land",S.land)}catch(_){}schedule()});
+try{const sv=localStorage.getItem("land");if(sv&&LANDCOL[sv]!==undefined||sv==="karta"){S.land=sv;document.querySelectorAll("[data-land]").forEach(x=>x.setAttribute("aria-checked",x.dataset.land===sv))}}catch(_){}
 document.querySelectorAll("[data-src]").forEach(b=>b.onclick=()=>{S.src=b.dataset.src;document.querySelectorAll("[data-src]").forEach(x=>x.setAttribute("aria-checked",x===b));$("own").hidden=S.src!=="egen";schedule()});
 $("hide").onclick=()=>$("panel").classList.toggle("hidden");
 const DIR8=[["N",0],["NO",45],["O",90],["SO",135],["S",180],["SV",225],["V",270],["NV",315]];
