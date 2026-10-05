@@ -9,7 +9,9 @@ let toastT; function toast(s){const t=$("toast");t.textContent=s;t.classList.add
 const map = L.map("map",{zoomControl:false,minZoom:8,maxZoom:17,center:[59.6,18.8],zoom:10});
 map.attributionControl.setPrefix(false);
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(map);
-L.tileLayer("https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png",{maxZoom:18,attribution:"Sjömärken © OpenSeaMap · SMHI · Copernicus Marine · EMODnet"}).addTo(map);
+// sjömärken ligger ovanpå alla färgade lager (men under namn och etiketter), så att de alltid syns
+map.createPane("seamarks").style.zIndex=380; map.getPane("seamarks").style.pointerEvents="none";
+L.tileLayer("https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png",{pane:"seamarks",maxZoom:18,attribution:"Sjömärken © OpenSeaMap · SMHI · Copernicus Marine · EMODnet"}).addTo(map);
 L.control.scale({imperial:false,position:"topleft"}).addTo(map);
 map.createPane("tint").style.zIndex=300; map.getPane("tint").style.pointerEvents="none"; map.getPane("tint").style.mixBlendMode="color";
 map.createPane("zones").style.zIndex=345; map.getPane("zones").style.pointerEvents="none";
