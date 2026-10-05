@@ -20,7 +20,7 @@ from shapely.geometry import LineString, box
 from shapely.ops import polygonize, unary_union
 from shapely.strtree import STRtree
 
-from common import BOUNDS, CACHE, MASK, MASK_ZOOMS
+from common import BOUNDS, CACHE, FULL_BOUNDS, MASK, MASK_ZOOMS
 
 PRIV = MASK / "privat"   # ligger i mask-mappen så att den sparas av flödet
 PRIV_ZOOMS = range(11, 14)
@@ -147,7 +147,10 @@ def render(polys, z):
 
 
 PARTS = MASK / "privat_delar"   # färdiga rutor sparas här, så att arbetet kan fortsätta nästa körning
-P_ROWS, P_COLS = 12, 9
+# rutornas storlek i grader; i testområdet små rutor så att varje fråga går snabbt
+_PR = (0.1125, 0.1556) if BOUNDS == FULL_BOUNDS else (0.04, 0.06)
+P_ROWS = max(1, math.ceil((BOUNDS[3] - BOUNDS[1]) / _PR[0]))
+P_COLS = max(1, math.ceil((BOUNDS[2] - BOUNDS[0]) / _PR[1]))
 
 
 def private_features(budget_s=20 * 60):
@@ -156,6 +159,13 @@ def private_features(budget_s=20 * 60):
     klart fortsätter där den slutade nästa gång. Returnerar None tills alla rutor finns."""
     w, s, e, n = BOUNDS
     PARTS.mkdir(parents=True, exist_ok=True)
+    grid = {"bounds": BOUNDS, "rows": P_ROWS, "cols": P_COLS}
+    gp = PARTS / "grid.json"
+    if not gp.exists() or json.loads(gp.read_text()) != grid:   # nytt område: börja om
+        import shutil
+        shutil.rmtree(PARTS, ignore_errors=True)
+        PARTS.mkdir(parents=True, exist_ok=True)
+        gp.write_text(json.dumps(grid))
     deadline = time.time() + budget_s
     todo = [(i, j) for i in range(P_ROWS) for j in range(P_COLS) if not (PARTS / f"{i}_{j}.json").exists()]
     print(f"Hus och bryggor: {P_ROWS * P_COLS - len(todo)} av {P_ROWS * P_COLS} rutor klara sedan tidigare", flush=True)
@@ -198,7 +208,7 @@ def private_features(budget_s=20 * 60):
         print(f"  {len(left)} rutor kvar, fortsätter nästa körning", flush=True)
         return None
     houses, piers = [], []
-    for f in sorted(PARTS.glob("*.json")):
+    for f in sorted(PARTS.glob("*_*.json")):
         d = json.loads(f.read_text())
         houses += d["houses"]
         piers += d["piers"]
