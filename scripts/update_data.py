@@ -74,14 +74,16 @@ def fetch_point(lat, lon):
 
 def update_wind():
     w, s, e, n = BOUNDS
+    # i ett litet område tätare punkter, så att det blir några vindpilar att se
+    lat_step, lon_step = min(LAT_STEP, (n - s) / 4), min(LON_STEP, (e - w) / 4)
     pts = []
-    lat = s + LAT_STEP / 2
+    lat = s + lat_step / 2
     while lat < n:
-        lon = w + LON_STEP / 2
+        lon = w + lon_step / 2
         while lon < e:
             pts.append((round(lat, 4), round(lon, 4)))
-            lon += LON_STEP
-        lat += LAT_STEP
+            lon += lon_step
+        lat += lat_step
     print(f"SMHI: {len(pts)} punkter", flush=True)
 
     old = {}
@@ -122,6 +124,7 @@ def update_wind():
 
     out = {
         "created": utcnow().strftime("%Y-%m-%dT%H:%MZ"),
+        "bounds": BOUNDS,
         "keys": keys,
         "times": times,
         "points": [list(pt) for pt in pts],
@@ -246,7 +249,11 @@ def ensure_depth():
     Varannan punkt hämtas (ca 115 x 230 m), vilket ändå är tätare än det svenska underlaget."""
     p = DATA / "djup.json"
     if p.exists():
-        return
+        try:
+            if json.loads(p.read_text()).get("bounds") == BOUNDS:
+                return
+        except Exception:  # noqa: BLE001
+            pass
     import csv
     import io
     import urllib.parse
@@ -256,7 +263,8 @@ def ensure_depth():
         print("numpy saknas, hoppar över djupdata")
         return
     w, s, e, n = BOUNDS
-    sel = f"[({s}):2:({n})][({w}):2:({e})]"
+    step = 1 if (e - w) * (n - s) < 0.2 else 2   # litet område: full upplösning
+    sel = f"[({s}):{step}:({n})][({w}):{step}:({e})]"
     url = EMOD + "?" + urllib.parse.quote(f"elevation{sel},interpolation_flag{sel}", safe=":(),=.")
     print("Hämtar djupdata från EMODnet ...", flush=True)
     req = urllib.request.Request(url, headers={"User-Agent": "skargardskartan/1.0"})
@@ -313,6 +321,7 @@ def ensure_depth():
     out = {
         "created": utcnow().strftime("%Y-%m-%dT%H:%MZ"),
         "source": "EMODnet Bathymetry DTM 2024",
+        "bounds": BOUNDS,
         "lat0": float(lats[0]), "lon0": float(lons[0]),
         "dlat": float(np.median(np.diff(lats))), "dlon": float(np.median(np.diff(lons))),
         "ny": int(ny), "nx": int(nx),
@@ -354,7 +363,11 @@ if __name__ == "__main__":
     DATA.mkdir(exist_ok=True)
     manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
     age = data_age_h()
-    if manual and age is not None and age < FRESH_H:
+    try:
+        same_area = json.loads((DATA / "wind.json").read_text()).get("bounds") == BOUNDS
+    except Exception:  # noqa: BLE001
+        same_area = False
+    if manual and same_area and age is not None and age < FRESH_H:
         print(f"Manuell körning och datan är {age:.1f} timmar gammal: hoppar över vind och vattentemperatur")
     else:
         update_wind()
