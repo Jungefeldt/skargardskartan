@@ -276,10 +276,13 @@ def _size_km(el):
 def _min_zoom(kind, typ, km):
     """Från vilken zoomnivå ett namn visas, ungefär som på ett sjökort."""
     if kind == "ort":
-        return {"town": 9, "village": 11, "hamlet": 12}.get(typ, 13)
+        return {"town": 9, "village": 11, "suburb": 11, "hamlet": 12, "neighbourhood": 12, "quarter": 12}.get(typ, 13)
     if kind == "vatten":
         return 10 if km > 8 else 11 if km > 3 else 12 if km > 1 else 13
     return 9 if km > 15 else 10 if km > 5 else 11 if km > 2 else 12 if km > 0.7 else 13 if km > 0.25 else 14
+
+
+NAMES_VERSION = 2   # höj när urvalet av namn ändras, så hämtas de om automatiskt
 
 
 def build_names():
@@ -295,13 +298,16 @@ def build_names():
             bb = f"({s1},{w1},{n1},{e1})"
             q = f"""[out:json][timeout:300];
 (
-  node["place"~"^(town|village|hamlet|locality|island|islet)$"]["name"]{bb};
+  node["place"~"^(town|village|hamlet|suburb|neighbourhood|quarter|locality|island|islet)$"]["name"]{bb};
+  way["place"~"^(suburb|neighbourhood|quarter)$"]["name"]{bb};
   way["place"~"^(island|islet)$"]["name"]{bb};
   relation["place"~"^(island|islet)$"]["name"]{bb};
   node["natural"~"^(bay|strait|cape|peninsula)$"]["name"]{bb};
   way["natural"~"^(bay|strait|peninsula)$"]["name"]{bb};
   relation["natural"~"^(bay|strait)$"]["name"]{bb};
   node["place"="sea"]["name"]{bb};
+  way["natural"="water"]["water"!~"^(pond|reservoir|basin|wastewater)$"]["name"]{bb};
+  relation["natural"="water"]["name"]{bb};
 );
 out tags bb qt;"""
             for el in overpass(q).get("elements", []):
@@ -319,7 +325,7 @@ out tags bb qt;"""
                 if not (s <= lat <= n and w <= lon <= e):
                     continue
                 typ = tg.get("place") or tg.get("natural")
-                kind = "ort" if typ in ("town", "village", "hamlet", "locality") else "vatten" if typ in ("bay", "strait", "sea") else "land"
+                kind = "ort" if typ in ("town", "village", "hamlet", "suburb", "neighbourhood", "quarter", "locality") else "vatten" if typ in ("bay", "strait", "sea", "water") else "land"
                 key = (nm, round(lat, 2), round(lon, 2))
                 if key in seen:
                     continue
@@ -329,6 +335,7 @@ out tags bb qt;"""
             time.sleep(3)
     MASK.mkdir(parents=True, exist_ok=True)
     (MASK / "namn.json").write_text(json.dumps(out, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    (MASK / "namn.ver").write_text(str(NAMES_VERSION))
     print(f"  {len(out)} namn sparade", flush=True)
 
 
