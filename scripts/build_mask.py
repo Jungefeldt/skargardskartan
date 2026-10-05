@@ -242,9 +242,80 @@ def build_private():
                                                  "hus": len(feat["houses"]), "bryggor": len(feat["piers"])}))
 
 
+def _size_km(el):
+    b = el.get("bounds")
+    if not b:
+        return 0.0
+    dy = (b["maxlat"] - b["minlat"]) * 111.0
+    dx = (b["maxlon"] - b["minlon"]) * 111.0 * math.cos(math.radians(b["minlat"]))
+    return max(dx, dy)
+
+
+def _min_zoom(kind, typ, km):
+    """Från vilken zoomnivå ett namn visas, ungefär som på ett sjökort."""
+    if kind == "ort":
+        return {"town": 9, "village": 11, "hamlet": 12}.get(typ, 13)
+    if kind == "vatten":
+        return 10 if km > 8 else 11 if km > 3 else 12 if km > 1 else 13
+    return 9 if km > 15 else 10 if km > 5 else 11 if km > 2 else 12 if km > 0.7 else 13 if km > 0.25 else 14
+
+
+def build_names():
+    """Namn på orter, öar, fjärdar, sund och uddar till appens eget namnlager."""
+    w, s, e, n = BOUNDS
+    out, seen = [], set()
+    rows, cols = 3, 2
+    print("Hämtar ortnamn, öar och fjärdar ...", flush=True)
+    for i in range(rows):
+        for j in range(cols):
+            s1, n1 = s + (n - s) * i / rows, s + (n - s) * (i + 1) / rows
+            w1, e1 = w + (e - w) * j / cols, w + (e - w) * (j + 1) / cols
+            bb = f"({s1},{w1},{n1},{e1})"
+            q = f"""[out:json][timeout:300];
+(
+  node["place"~"^(town|village|hamlet|locality|island|islet)$"]["name"]{bb};
+  way["place"~"^(island|islet)$"]["name"]{bb};
+  relation["place"~"^(island|islet)$"]["name"]{bb};
+  node["natural"~"^(bay|strait|cape|peninsula)$"]["name"]{bb};
+  way["natural"~"^(bay|strait|peninsula)$"]["name"]{bb};
+  relation["natural"~"^(bay|strait)$"]["name"]{bb};
+  node["place"="sea"]["name"]{bb};
+);
+out tags bb qt;"""
+            for el in overpass(q).get("elements", []):
+                tg = el.get("tags", {})
+                nm = tg.get("name")
+                if not nm:
+                    continue
+                if "lat" in el:
+                    lat, lon = el["lat"], el["lon"]
+                elif "bounds" in el:
+                    b = el["bounds"]
+                    lat, lon = (b["minlat"] + b["maxlat"]) / 2, (b["minlon"] + b["maxlon"]) / 2
+                else:
+                    continue
+                if not (s <= lat <= n and w <= lon <= e):
+                    continue
+                typ = tg.get("place") or tg.get("natural")
+                kind = "ort" if typ in ("town", "village", "hamlet", "locality") else "vatten" if typ in ("bay", "strait", "sea") else "land"
+                key = (nm, round(lat, 2), round(lon, 2))
+                if key in seen:
+                    continue
+                seen.add(key)
+                km = _size_km(el)
+                out.append([nm, round(lat, 5), round(lon, 5), kind, _min_zoom(kind, typ, km), round(km, 2)])
+            time.sleep(3)
+    MASK.mkdir(parents=True, exist_ok=True)
+    (MASK / "namn.json").write_text(json.dumps(out, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    print(f"  {len(out)} namn sparade", flush=True)
+
+
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "privat":
         build_private()
+        return
+    if len(sys.argv) > 1 and sys.argv[1] == "namn":
+        build_names()
         return
     polys = water_polygons(coastlines())
     for z in MASK_ZOOMS:
@@ -252,6 +323,10 @@ def main():
         print(f"  zoom {z}: {n} rutor", flush=True)
     (MASK / "info.json").write_text(json.dumps({"bounds": BOUNDS, "zooms": list(MASK_ZOOMS)}))
     build_private()
+    try:
+        build_names()
+    except Exception as ex:  # noqa: BLE001
+        print(f"Namn kunde inte hämtas ({ex}), försöker igen nästa körning")
     print("Klart.")
 
 

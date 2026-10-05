@@ -80,3 +80,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:30px;margin:2px 0
 .slbl .wv{display:block;margin:0 auto 1px}
 .slbl b{display:block;font:700 12px system-ui,sans-serif}
 .slbl em{display:block;font:italic 600 11px system-ui,sans-serif}
+.nm{white-space:nowrap;transform:translate(-50%,-50%);pointer-events:none;text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 3px #fff,0 0 4px #fff;line-height:1}
+.nm-ort{font:700 14px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#1E1C18}
+.nm-land{font:600 13px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#4A3B20}
+.nm-vatten{font:italic 600 13px Georgia,"Times New Roman",serif;color:#134D78;letter-spacing:.04em}
