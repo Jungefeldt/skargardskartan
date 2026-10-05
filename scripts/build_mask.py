@@ -57,11 +57,17 @@ def overpass(query, timeout=300, attempts=4):
 
 
 def coastlines():
-    CACHE.mkdir(exist_ok=True)
-    p = CACHE / "coast.json"
+    # kustlinjen sparas i förrådet, så att en ny maskbyggnad inte behöver hämta om den
+    p = MASK / "kust.json"
+    data = None
     if p.exists():
-        data = json.loads(p.read_text())
-    else:
+        try:
+            data = json.loads(p.read_text())
+            if data.get("bounds") != BOUNDS:
+                data = None
+        except Exception:  # noqa: BLE001
+            data = None
+    if data is None:
         w, s, e, n = BOUNDS
         print("Hämtar kustlinje från OpenStreetMap i delar ...", flush=True)
         els, seen = [], set()
@@ -70,15 +76,16 @@ def coastlines():
             for j in range(cols):
                 s1, n1 = s + (n - s) * i / rows, s + (n - s) * (i + 1) / rows
                 w1, e1 = w + (e - w) * j / cols, w + (e - w) * (j + 1) / cols
-                part = overpass(f'[out:json][timeout:300];way["natural"="coastline"]({s1},{w1},{n1},{e1});out geom;')
+                part = overpass(f'[out:json][timeout:180];way["natural"="coastline"]({s1},{w1},{n1},{e1});out geom;', timeout=200, attempts=3)
                 for el in part.get("elements", []):
                     if el.get("id") not in seen:
                         seen.add(el.get("id"))
                         els.append(el)
                 print(f"  del {i * cols + j + 1}/{rows * cols}: {len(els)} kustlinjer hittills", flush=True)
                 time.sleep(5)
-        data = {"elements": els}
-        p.write_text(json.dumps(data))
+        data = {"bounds": BOUNDS, "elements": [{"id": el["id"], "geometry": [{"lon": round(q["lon"], 7), "lat": round(q["lat"], 7)} for q in el["geometry"]]} for el in els if el.get("geometry")]}
+        MASK.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(data, separators=(",", ":")))
     lines = [
         LineString([(q["lon"], q["lat"]) for q in el["geometry"]])
         for el in data.get("elements", [])
@@ -295,18 +302,22 @@ def _min_zoom(kind, typ, km):
 NAMES_VERSION = 2   # höj när urvalet av namn ändras, så hämtas de om automatiskt
 
 
-def build_names():
-    """Namn på orter, öar, fjärdar, sund och uddar till appens eget namnlager."""
+def build_names(budget_s=10 * 60):
+    """Namn på orter, öar, fjärdar, sund och uddar till appens eget namnlager.
+    Sparas bara om alla delar hann hämtas, annars behålls de tidigare namnen."""
     w, s, e, n = BOUNDS
     out, seen = [], set()
+    deadline = time.time() + budget_s
     rows, cols = 3, 2
     print("Hämtar ortnamn, öar och fjärdar ...", flush=True)
     for i in range(rows):
         for j in range(cols):
             s1, n1 = s + (n - s) * i / rows, s + (n - s) * (i + 1) / rows
             w1, e1 = w + (e - w) * j / cols, w + (e - w) * (j + 1) / cols
+            if time.time() > deadline:
+                raise RuntimeError("namnen tog för lång tid, behåller de tidigare")
             bb = f"({s1},{w1},{n1},{e1})"
-            q = f"""[out:json][timeout:300];
+            q = f"""[out:json][timeout:120];
 (
   node["place"~"^(town|village|hamlet|suburb|neighbourhood|quarter|locality|island|islet)$"]["name"]{bb};
   way["place"~"^(suburb|neighbourhood|quarter)$"]["name"]{bb};
@@ -320,7 +331,7 @@ def build_names():
   relation["natural"="water"]["name"]{bb};
 );
 out tags bb qt;"""
-            for el in overpass(q).get("elements", []):
+            for el in overpass(q, timeout=130, attempts=2).get("elements", []):
                 tg = el.get("tags", {})
                 nm = tg.get("name")
                 if not nm:
