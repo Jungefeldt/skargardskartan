@@ -210,8 +210,21 @@ def ensure_names():
         print(f"Namn kunde inte hämtas ({ex}), försöker igen nästa körning")
 
 
+def ensure_private():
+    """Bygger zonerna runt hus och bryggor en gång om de saknas."""
+    from common import MASK
+    if (MASK / "privat" / "info.json").exists():
+        return
+    try:
+        import build_mask
+        build_mask.build_private()
+    except Exception as ex:  # noqa: BLE001
+        print(f"Hemfridszoner kunde inte byggas ({ex}), försöker igen nästa körning")
+
+
 if __name__ == "__main__":
     DATA.mkdir(exist_ok=True)
     update_wind()
     update_temp()
     ensure_names()
+    ensure_private()
