@@ -300,15 +300,20 @@ function drawZones(R,vx0,vy0,vx1,vy1,mz,Z){const mg=4,cx0=Math.max(0,vx0-R.px0-m
   if(Z.DB){const db=dil(crop(Z.DB));let lo=99,hi=-1;for(let i=0;i<n;i++){if(db[i]===-999)continue;if(db[i]<lo)lo=db[i];if(db[i]>hi)hi=db[i]}
     for(let b2=lo+1;b2<=hi;b2++)strokeLoops(x,traceLoops(lvl(db,b2),W0,H0),h,b2<=2?"rgba(30,90,150,.85)":"rgba(40,100,160,.55)",(b2<=2?1.2:.9)*dpr)}
   if(Z.priv){const P=crop(Z.priv),WAc=crop(R.water),M=new Uint8Array(n);for(let i=0;i<n;i++)M[i]=P[i]&&WAc[i]?1:0;
-    const loops=traceLoops(M,W0,H0);fillLoops(x,loops,h,"rgba(70,56,50,.72)");strokeLoops(x,loops,h,"#281E1C",1.4*dpr)}}
-let MASK_MAX=13;
+    const loops=traceLoops(M,W0,H0);fillLoops(x,loops,h,"rgba(70,56,50,.72)");strokeLoops(x,loops,h,"#281E1C",1.4*dpr)}
+  // klipp bort allt som hamnat innanför kustlinjen, så att zonerna slutar exakt vid stranden
+  const C=lastCoast;if(C){const f=Math.pow(2,mz-C.cz),ox=R.px0+cx0,oy=R.py0+cy0,TX=v=>((C.x0+(v-2)/2)*f-ox)*k,TY=v=>((C.y0+(v-2)/2)*f-oy)*k;
+    x.save();x.globalCompositeOperation="destination-out";x.fillStyle="#000";x.beginPath();
+    for(const p of C.loops){x.moveTo(TX(p[0][0]),TY(p[0][1]));for(let i=1;i<p.length;i++)x.lineTo(TX(p[i][0]),TY(p[i][1]));x.closePath()}
+    x.fill("evenodd");x.restore()}}
+let MASK_MAX=13,lastCoast=null;
 async function drawCoast(){const zz=map.getZoom(),cz=Math.min(MASK_MAX,Math.max(11,zz)),bnd=map.getBounds().pad(.04),
   nw=CRS.latLngToPoint(bnd.getNorthWest(),cz),se=CRS.latLngToPoint(bnd.getSouthEast(),cz),x0=Math.floor(nw.x),y0=Math.floor(nw.y),W0=Math.ceil(se.x)-x0,H0=Math.ceil(se.y)-y0;
   const R=await region(cz,x0,y0,W0,H0),dpr=window.devicePixelRatio||1;
   let k=Math.pow(2,zz-cz)*dpr;k=Math.min(k,4096/W0,4096/H0);const h=k/2;
   const x=overlayCanvas("coast",cz,x0,y0,W0,H0,k),LAND=new Uint8Array(W0*H0);for(let i=0;i<LAND.length;i++)LAND[i]=R.water[i]?0:1;
   // mild utjämning: tar bort trappstegen men behåller uddar och vikar (lite mer när man zoomat förbi maskens upplösning)
-  const loops=traceLoops(LAND,W0,H0,zz-cz>=1?2:1);
+  const loops=traceLoops(LAND,W0,H0,zz-cz>=1?2:1);lastCoast={loops,cz,x0,y0};
   // landyta innanför konturen, i sjökortsfärg (inte när vanlig karta är vald)
   if(S.land!=="karta"){const lc=LANDCOL[S.land];fillLoops(x,loops,h,`rgba(${lc[0]},${lc[1]},${lc[2]},.94)`)}
   strokeLoops(x,loops,h,"#15191D",1.5*dpr)}
