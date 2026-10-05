@@ -197,7 +197,21 @@ def update_temp():
     print(f"  vattentemperatur sparad: {len(out['dates'])} dagar", flush=True)
 
 
+def ensure_names():
+    """Hämtar namnlagret en gång om det saknas (eller är äldre än 30 dagar)."""
+    from common import MASK
+    p = MASK / "namn.json"
+    if p.exists() and time.time() - p.stat().st_mtime < 30 * 86400:
+        return
+    try:
+        import build_mask
+        build_mask.build_names()
+    except Exception as ex:  # noqa: BLE001
+        print(f"Namn kunde inte hämtas ({ex}), försöker igen nästa körning")
+
+
 if __name__ == "__main__":
     DATA.mkdir(exist_ok=True)
     update_wind()
     update_temp()
+    ensure_names()
