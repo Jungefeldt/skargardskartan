@@ -310,7 +310,9 @@ function drawZones(R,vx0,vy0,vx1,vy1,mz,Z){const mg=4,cx0=Math.max(0,vx0-R.px0-m
   if(Z.KPAT){const A=dil(crop(Z.KPAT)),PX=v=>(v-2)*h;
     for(let kk=1;kk<=4;kk++){const pat=wavePattern(x,kk,dpr,(R.px0+cx0)*k,(R.py0+cy0)*k),L1=traceLoops(lvl(A,kk),W0,H0);if(!L1.length)continue;
       const L2=kk<4?traceLoops(lvl(A,kk+1),W0,H0):[];x.fillStyle=pat;x.beginPath();
-      for(const p of L1.concat(L2)){x.moveTo(PX(p[0][0]),PX(p[0][1]));for(let i=1;i<p.length;i++)x.lineTo(PX(p[i][0]),PX(p[i][1]));x.closePath()}x.fill("evenodd")}}
+      for(const p of L1.concat(L2)){x.moveTo(PX(p[0][0]),PX(p[0][1]));for(let i=1;i<p.length;i++)x.lineTo(PX(p[i][0]),PX(p[i][1]));x.closePath()}x.fill("evenodd");
+      // tunn kontur runt varje fält av sjögång
+      strokeLoops(x,L1,h,"rgba(15,20,25,.62)",.9*dpr)}}
   // temperaturgränser som tunna linjer, som djupkurvor
   if(tb){let lo=1e9,hi=-1e9;for(let i=0;i<n;i++){if(tb[i]===-999)continue;if(tb[i]<lo)lo=tb[i];if(tb[i]>hi)hi=tb[i]}
     for(let b2=lo+1;b2<=hi;b2++)strokeLoops(x,traceLoops(lvl(tb,b2),W0,H0),h,"#0B3550",1.3*dpr)}
