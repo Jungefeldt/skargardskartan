@@ -231,6 +231,93 @@ def ensure_private():
         print(f"Hemfridszoner kunde inte byggas ({ex}), försöker igen nästa körning")
 
 
+# ------------------------------------------------------------------- djup
+
+EMOD = "https://erddap.emodnet.eu/erddap/griddap/bathymetry_dtm_2024.csv"
+
+
+def ensure_depth():
+    """Hämtar djupdata från EMODnet Bathymetry (DTM 2024) en gång och sparar som data/djup.json.
+    Varannan punkt hämtas (ca 115 x 230 m), vilket ändå är tätare än det svenska underlaget."""
+    p = DATA / "djup.json"
+    if p.exists():
+        return
+    import csv
+    import io
+    import urllib.parse
+    try:
+        import numpy as np
+    except ImportError:
+        print("numpy saknas, hoppar över djupdata")
+        return
+    w, s, e, n = BOUNDS
+    sel = f"[({s}):2:({n})][({w}):2:({e})]"
+    url = EMOD + "?" + urllib.parse.quote(f"elevation{sel},interpolation_flag{sel}", safe=":(),=.")
+    print("Hämtar djupdata från EMODnet ...", flush=True)
+    req = urllib.request.Request(url, headers={"User-Agent": "skargardskartan/1.0"})
+    with urllib.request.urlopen(req, timeout=240) as r:
+        text = r.read().decode("utf-8")
+    rows = csv.reader(io.StringIO(text))
+    head = next(rows)
+    next(rows)  # enheter
+    ia, io_, ie, iflag = head.index("latitude"), head.index("longitude"), head.index("elevation"), head.index("interpolation_flag")
+    pts = []
+    for row in rows:
+        try:
+            el = float(row[ie]) if row[ie] not in ("", "NaN") else float("nan")
+            fl = int(row[iflag]) if row[iflag] not in ("", "NaN") else 1
+            pts.append((float(row[ia]), float(row[io_]), el, fl))
+        except (ValueError, IndexError):
+            continue
+    lats = np.array(sorted({q[0] for q in pts}))
+    lons = np.array(sorted({q[1] for q in pts}))
+    li = {v: k for k, v in enumerate(lats)}
+    lo = {v: k for k, v in enumerate(lons)}
+    depth = np.full((len(lats), len(lons)), np.nan)
+    measured = np.zeros((len(lats), len(lons)), dtype=bool)
+    for la, lon, el, fl in pts:
+        y, x = li[la], lo[lon]
+        if el == el and el < 0:
+            depth[y, x] = -el
+            measured[y, x] = fl == 0
+    # fyll rutor utan djup (land och strandnära rutor) från grannarna, så att appen alltid
+    # har ett värde under sin egen, noggrannare kustlinje
+    filled = np.isfinite(depth)
+    if not filled.any():
+        print("  EMODnet gav inga djup, hoppar över")
+        return
+    v = np.where(filled, depth, 0.0)
+    ny, nx = v.shape
+    for _ in range(400):
+        if filled.all():
+            break
+        fp = np.pad(filled, 1)
+        vp = np.pad(v, 1)
+        s_ = np.zeros_like(v)
+        c = np.zeros_like(v)
+        for dy, dx in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)]:
+            ys, xs = slice(1 + dy, 1 + dy + ny), slice(1 + dx, 1 + dx + nx)
+            c += fp[ys, xs]
+            s_ += vp[ys, xs] * fp[ys, xs]
+        new = (~filled) & (c > 0)
+        if not new.any():
+            break
+        v[new] = s_[new] / c[new]
+        filled |= new
+    q = np.clip(np.round(v * 2), 0, 254).astype("uint8")  # halvmeter, upp till 127 m
+    out = {
+        "created": utcnow().strftime("%Y-%m-%dT%H:%MZ"),
+        "source": "EMODnet Bathymetry DTM 2024",
+        "lat0": float(lats[0]), "lon0": float(lons[0]),
+        "dlat": float(np.median(np.diff(lats))), "dlon": float(np.median(np.diff(lons))),
+        "ny": int(ny), "nx": int(nx),
+        "d": base64.b64encode(q.tobytes()).decode("ascii"),
+        "m": base64.b64encode(np.packbits(measured.ravel()).tobytes()).decode("ascii"),
+    }
+    p.write_text(json.dumps(out, separators=(",", ":")))
+    print(f"  djup sparat: {ny} x {nx} punkter, {int(measured.sum())} med lodningar", flush=True)
+
+
 def data_age_h():
     """Hur många timmar sedan vinddatan hämtades senast (None om den saknas)."""
     try:
@@ -268,6 +355,10 @@ if __name__ == "__main__":
         update_wind()
         with_time_limit(TEMP_BUDGET_S, update_temp)
     ensure_names()
+    try:
+        with_time_limit(5 * 60, ensure_depth)
+    except Exception as ex:  # noqa: BLE001
+        print(f"Djupdata kunde inte hämtas ({ex}), försöker igen nästa körning")
     if manual:
         print("Manuell körning: hemfridszonerna byggs i de automatiska körningarna")
     else:

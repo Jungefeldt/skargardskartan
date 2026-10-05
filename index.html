@@ -34,6 +34,7 @@
     <button class="chip" data-layer="la" aria-pressed="true">Lä</button>
     <button class="chip" data-layer="waves" aria-pressed="true">Våghöjd</button>
     <button class="chip" data-layer="temp" aria-pressed="false">Vattentemp</button>
+    <button class="chip" data-layer="depth" id="depthchip" aria-pressed="false">Djup</button>
     <button class="chip" data-layer="arrows" aria-pressed="true">Vindpilar</button>
     <button class="chip" data-layer="priv" id="privchip" aria-pressed="true">Brygga/hus 25 m</button>
     <button class="chip find" id="findbtn" aria-pressed="false">Hitta plats</button>
@@ -48,6 +49,10 @@
       </div></div>
     <label class="sl">Vattentemp från <b id="tminv"></b><input type="range" id="tmin" min="0" max="24" step="1"></label>
     <label class="sl">till <b id="tmaxv"></b><input type="range" id="tmax" min="0" max="24" step="1"></label>
+    <div id="depthfind">
+      <label class="sl">Djup från <b id="dminv"></b><input type="range" id="dmin" min="0" max="60" step="1" value="0"></label>
+      <label class="sl">till <b id="dmaxv"></b><input type="range" id="dmax" min="0" max="60" step="1" value="60"></label>
+    </div>
   </div>
   <div class="frow"><span>Land</span>
     <div class="seg small" role="radiogroup" aria-label="Färg på land">
