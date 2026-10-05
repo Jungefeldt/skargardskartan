@@ -206,10 +206,15 @@ def update_temp():
 
 
 def ensure_names():
-    """Hämtar namnlagret en gång om det saknas (eller är äldre än 30 dagar)."""
+    """Hämtar namnlagret om det saknas eller om urvalet av namn har ändrats."""
     from common import MASK
-    p = MASK / "namn.json"
-    if p.exists() and time.time() - p.stat().st_mtime < 30 * 86400:
+    p, v = MASK / "namn.json", MASK / "namn.ver"
+    try:
+        import build_mask
+        current = v.exists() and v.read_text().strip() == str(build_mask.NAMES_VERSION)
+    except Exception:  # noqa: BLE001
+        current = False
+    if p.exists() and current:
         return
     try:
         import build_mask
