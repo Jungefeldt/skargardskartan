@@ -221,7 +221,7 @@ def ensure_names():
         return
     try:
         import build_mask
-        build_mask.build_names()
+        with_time_limit(10 * 60, build_mask.build_names)
     except Exception as ex:  # noqa: BLE001
         print(f"Namn kunde inte hämtas ({ex}), försöker igen nästa körning")
 
