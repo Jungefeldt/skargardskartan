@@ -225,7 +225,7 @@ def ensure_private():
         return
     try:
         import build_mask
-        build_mask.build_private()
+        with_time_limit(25 * 60, build_mask.build_private)
     except Exception as ex:  # noqa: BLE001
         print(f"Hemfridszoner kunde inte byggas ({ex}), försöker igen nästa körning")
 

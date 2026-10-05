@@ -15,7 +15,7 @@ import time
 import urllib.parse
 import urllib.request
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 from shapely.geometry import LineString, box
 from shapely.ops import polygonize, unary_union
 from shapely.strtree import STRtree
@@ -35,10 +35,10 @@ SERVERS = [
 ]
 
 
-def overpass(query):
+def overpass(query, timeout=300, attempts=4):
     """Provar flera Overpass-servrar och försöker igen om de är överbelastade."""
     last = None
-    for attempt in range(4):
+    for attempt in range(attempts):
         for url in SERVERS:
             try:
                 req = urllib.request.Request(
@@ -46,12 +46,13 @@ def overpass(query):
                     data=urllib.parse.urlencode({"data": query}).encode(),
                     headers={"User-Agent": "skargardskartan/1.0"},
                 )
-                with urllib.request.urlopen(req, timeout=300) as r:
+                with urllib.request.urlopen(req, timeout=timeout) as r:
                     return json.loads(r.read().decode("utf-8"))
             except Exception as ex:  # noqa: BLE001
                 last = ex
                 print(f"    {url.split('/')[2]}: {ex}", flush=True)
-        time.sleep(30 * (attempt + 1))
+        if attempt < attempts - 1:
+            time.sleep(30 * (attempt + 1))
     raise RuntimeError(f"Ingen Overpass-server svarade: {last}")
 
 
@@ -145,36 +146,39 @@ def render(polys, z):
     return count
 
 
-def private_features():
-    """Hus och bryggor nära stranden från OpenStreetMap. Hus hämtas som mittpunkter
-    (litet svar), bryggor, kajer och vågbrytare med hela sin form."""
+def private_features(budget_s=20 * 60):
+    """Hus och bryggor från OpenStreetMap, hämtade i små rutor med en enkel fråga som
+    servrarna klarar snabbt. Hus hämtas som mittpunkter, bryggor och kajer med hela
+    sin form. Vilka som ligger vid vatten avgörs sedan med vår egen kustmask."""
     CACHE.mkdir(exist_ok=True)
     p = CACHE / "private.json"
     if p.exists():
         return json.loads(p.read_text())
     w, s, e, n = BOUNDS
     houses, piers, seen = [], [], set()
-    rows, cols = 6, 4
-    print("Hämtar hus och bryggor nära stranden ...", flush=True)
+    rows, cols = 9, 6
+    deadline = time.time() + budget_s
+    print("Hämtar hus och bryggor ...", flush=True)
     for i in range(rows):
         for j in range(cols):
+            if time.time() > deadline:
+                raise RuntimeError("tog för lång tid, försöker igen nästa körning")
             s1, n1 = s + (n - s) * i / rows, s + (n - s) * (i + 1) / rows
             w1, e1 = w + (e - w) * j / cols, w + (e - w) * (j + 1) / cols
-            bb = f"({s1},{w1},{n1},{e1})"
-            q = f"""[out:json][timeout:300];
-way["natural"="coastline"]{bb}->.c;
+            bb = f"({s1:.5f},{w1:.5f},{n1:.5f},{e1:.5f})"
+            q = f"""[out:json][timeout:120];
 (
-  way(around.c:60)["building"];
-  relation(around.c:60)["building"];
-  node(around.c:60)["leisure"="slipway"];
+  way["building"]{bb};
+  relation["building"]{bb};
+  node["leisure"="slipway"]{bb};
 )->.h;
 .h out center qt;
 (
-  way(around.c:60)["man_made"~"^(pier|quay|breakwater|groyne)$"];
-  way(around.c:60)["leisure"="marina"];
+  way["man_made"~"^(pier|quay|breakwater|groyne)$"]{bb};
+  way["leisure"="marina"]{bb};
 )->.p;
 .p out geom qt;"""
-            for el in overpass(q).get("elements", []):
+            for el in overpass(q, timeout=150, attempts=2).get("elements", []):
                 key = (el.get("type"), el.get("id"))
                 if key in seen:
                     continue
@@ -186,7 +190,7 @@ way["natural"="coastline"]{bb}->.c;
                 elif "lat" in el:
                     houses.append([round(el["lon"], 6), round(el["lat"], 6)])
             print(f"  del {i * cols + j + 1}/{rows * cols}: {len(houses)} hus, {len(piers)} bryggor", flush=True)
-            time.sleep(3)
+            time.sleep(1)
     data = {"houses": houses, "piers": piers}
     p.write_text(json.dumps(data))
     return data
@@ -222,6 +226,11 @@ def render_private(feat, z):
             tile = img.crop(((tx - tx0) * 256, (ty - ty0) * 256, (tx - tx0 + 1) * 256, (ty - ty0 + 1) * 256))
             if not tile.getbbox():
                 continue
+            mt = MASK / str(z) / str(tx) / f"{ty}.png"
+            if mt.exists():  # behåll bara zon som ligger på vatten
+                tile = ImageChops.logical_and(tile, Image.open(mt).convert("1"))
+                if not tile.getbbox():
+                    continue
             out = PRIV / str(z) / str(tx)
             out.mkdir(parents=True, exist_ok=True)
             tile.save(out / f"{ty}.png", optimize=True)
