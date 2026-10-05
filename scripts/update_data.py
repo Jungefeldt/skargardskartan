@@ -219,13 +219,14 @@ def ensure_names():
 
 
 def ensure_private():
-    """Bygger zonerna runt hus och bryggor en gång om de saknas."""
+    """Bygger zonerna runt hus och bryggor om de saknas, högst 10 minuter per körning.
+    Färdiga delar sparas, så att nästa körning fortsätter där den här slutade."""
     from common import MASK
     if (MASK / "privat" / "info.json").exists():
         return
     try:
         import build_mask
-        with_time_limit(25 * 60, build_mask.build_private)
+        with_time_limit(14 * 60, lambda: build_mask.build_private(10 * 60))
     except Exception as ex:  # noqa: BLE001
         print(f"Hemfridszoner kunde inte byggas ({ex}), försöker igen nästa körning")
 
@@ -267,4 +268,7 @@ if __name__ == "__main__":
         update_wind()
         with_time_limit(TEMP_BUDGET_S, update_temp)
     ensure_names()
-    ensure_private()
+    if manual:
+        print("Manuell körning: hemfridszonerna byggs i de automatiska körningarna")
+    else:
+        ensure_private()

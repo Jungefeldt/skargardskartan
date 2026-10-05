@@ -146,27 +146,26 @@ def render(polys, z):
     return count
 
 
+PARTS = MASK / "privat_delar"   # färdiga rutor sparas här, så att arbetet kan fortsätta nästa körning
+P_ROWS, P_COLS = 12, 9
+
+
 def private_features(budget_s=20 * 60):
     """Hus och bryggor från OpenStreetMap, hämtade i små rutor med en enkel fråga som
-    servrarna klarar snabbt. Hus hämtas som mittpunkter, bryggor och kajer med hela
-    sin form. Vilka som ligger vid vatten avgörs sedan med vår egen kustmask."""
-    CACHE.mkdir(exist_ok=True)
-    p = CACHE / "private.json"
-    if p.exists():
-        return json.loads(p.read_text())
+    servrarna klarar snabbt. Varje färdig ruta sparas, så att en körning som inte hinner
+    klart fortsätter där den slutade nästa gång. Returnerar None tills alla rutor finns."""
     w, s, e, n = BOUNDS
-    houses, piers, seen = [], [], set()
-    rows, cols = 9, 6
+    PARTS.mkdir(parents=True, exist_ok=True)
     deadline = time.time() + budget_s
-    print("Hämtar hus och bryggor ...", flush=True)
-    for i in range(rows):
-        for j in range(cols):
-            if time.time() > deadline:
-                raise RuntimeError("tog för lång tid, försöker igen nästa körning")
-            s1, n1 = s + (n - s) * i / rows, s + (n - s) * (i + 1) / rows
-            w1, e1 = w + (e - w) * j / cols, w + (e - w) * (j + 1) / cols
-            bb = f"({s1:.5f},{w1:.5f},{n1:.5f},{e1:.5f})"
-            q = f"""[out:json][timeout:120];
+    todo = [(i, j) for i in range(P_ROWS) for j in range(P_COLS) if not (PARTS / f"{i}_{j}.json").exists()]
+    print(f"Hus och bryggor: {P_ROWS * P_COLS - len(todo)} av {P_ROWS * P_COLS} rutor klara sedan tidigare", flush=True)
+    for i, j in todo:
+        if time.time() > deadline:
+            break
+        s1, n1 = s + (n - s) * i / P_ROWS, s + (n - s) * (i + 1) / P_ROWS
+        w1, e1 = w + (e - w) * j / P_COLS, w + (e - w) * (j + 1) / P_COLS
+        bb = f"({s1:.5f},{w1:.5f},{n1:.5f},{e1:.5f})"
+        q = f"""[out:json][timeout:90];
 (
   way["building"]{bb};
   relation["building"]{bb};
@@ -178,22 +177,32 @@ def private_features(budget_s=20 * 60):
   way["leisure"="marina"]{bb};
 )->.p;
 .p out geom qt;"""
-            for el in overpass(q, timeout=150, attempts=2).get("elements", []):
-                key = (el.get("type"), el.get("id"))
-                if key in seen:
-                    continue
-                seen.add(key)
-                if el.get("geometry"):
-                    piers.append([[round(g["lon"], 6), round(g["lat"], 6)] for g in el["geometry"]])
-                elif "center" in el:
-                    houses.append([round(el["center"]["lon"], 6), round(el["center"]["lat"], 6)])
-                elif "lat" in el:
-                    houses.append([round(el["lon"], 6), round(el["lat"], 6)])
-            print(f"  del {i * cols + j + 1}/{rows * cols}: {len(houses)} hus, {len(piers)} bryggor", flush=True)
-            time.sleep(1)
-    data = {"houses": houses, "piers": piers}
-    p.write_text(json.dumps(data))
-    return data
+        try:
+            els = overpass(q, timeout=100, attempts=1).get("elements", [])
+        except Exception as ex:  # noqa: BLE001
+            print(f"  ruta {i}_{j} misslyckades ({str(ex)[:80]}), tas nästa gång", flush=True)
+            continue
+        houses, piers = [], []
+        for el in els:
+            if el.get("geometry"):
+                piers.append([[round(g["lon"], 6), round(g["lat"], 6)] for g in el["geometry"]])
+            elif "center" in el:
+                houses.append([round(el["center"]["lon"], 6), round(el["center"]["lat"], 6)])
+            elif "lat" in el:
+                houses.append([round(el["lon"], 6), round(el["lat"], 6)])
+        (PARTS / f"{i}_{j}.json").write_text(json.dumps({"houses": houses, "piers": piers}, separators=(",", ":")))
+        print(f"  ruta {i}_{j}: {len(houses)} hus, {len(piers)} bryggor", flush=True)
+        time.sleep(1)
+    left = [1 for i in range(P_ROWS) for j in range(P_COLS) if not (PARTS / f"{i}_{j}.json").exists()]
+    if left:
+        print(f"  {len(left)} rutor kvar, fortsätter nästa körning", flush=True)
+        return None
+    houses, piers = [], []
+    for f in sorted(PARTS.glob("*.json")):
+        d = json.loads(f.read_text())
+        houses += d["houses"]
+        piers += d["piers"]
+    return {"houses": houses, "piers": piers}
 
 
 def render_private(feat, z):
@@ -238,17 +247,21 @@ def render_private(feat, z):
     return count
 
 
-def build_private():
+def build_private(budget_s=20 * 60):
     try:
-        feat = private_features()
+        feat = private_features(budget_s)
     except Exception as ex:  # noqa: BLE001
-        print(f"Hus och bryggor kunde inte hämtas ({ex}), hoppar över hemfridszoner den här gången")
+        print(f"Hus och bryggor kunde inte hämtas ({ex}), försöker igen nästa körning")
+        return
+    if feat is None:
         return
     PRIV.mkdir(parents=True, exist_ok=True)
     for z in PRIV_ZOOMS:
         print(f"  hemfridszon zoom {z}: {render_private(feat, z)} rutor", flush=True)
     (PRIV / "info.json").write_text(json.dumps({"bounds": BOUNDS, "zooms": list(PRIV_ZOOMS), "meter": PRIV_M,
                                                  "hus": len(feat["houses"]), "bryggor": len(feat["piers"])}))
+    import shutil
+    shutil.rmtree(PARTS, ignore_errors=True)   # delarna behövs inte när zonerna är ritade
 
 
 def _size_km(el):
