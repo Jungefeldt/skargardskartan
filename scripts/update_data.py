@@ -21,6 +21,9 @@ from common import BOUNDS, DATA, DAYS_BACK
 
 SMHI = "https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/{lon}/lat/{lat}/data.json"
 LAT_STEP, LON_STEP = 0.10, 0.15  # punkternas täthet (ca 11 x 8 km)
+WIND_BUDGET_S = 6 * 60   # längsta tid för vindhämtningen
+TEMP_BUDGET_S = 8 * 60   # längsta tid för vattentemperaturen
+FRESH_H = 6              # manuella körningar hoppar över hämtningen om datan är yngre än så
 
 
 def utcnow():
@@ -59,7 +62,7 @@ def parse_step(step):
 def fetch_point(lat, lon):
     url = SMHI.format(lat=f"{lat:.4f}", lon=f"{lon:.4f}")
     req = urllib.request.Request(url, headers={"User-Agent": "skargardskartan/1.0"})
-    with urllib.request.urlopen(req, timeout=60) as r:
+    with urllib.request.urlopen(req, timeout=20) as r:
         js = json.loads(r.read().decode("utf-8"))
     out = {}
     for step in js.get("timeSeries", []):
@@ -94,8 +97,13 @@ def update_wind():
     keep_from = (utcnow() - dt.timedelta(days=DAYS_BACK)).strftime("%Y-%m-%dT%H:00Z")
     series = {}
     ok = 0
+    t_end = time.time() + WIND_BUDGET_S
     for la, lo in pts:
         merged = {t: v for t, v in old.get((la, lo), {}).items() if t >= keep_from}
+        if time.time() > t_end:
+            # tiden är slut: behåll tidigare data för resten av punkterna
+            series[(la, lo)] = merged
+            continue
         try:
             merged.update(fetch_point(la, lo))
             ok += 1
@@ -222,9 +230,41 @@ def ensure_private():
         print(f"Hemfridszoner kunde inte byggas ({ex}), försöker igen nästa körning")
 
 
+def data_age_h():
+    """Hur många timmar sedan vinddatan hämtades senast (None om den saknas)."""
+    try:
+        c = json.loads((DATA / "wind.json").read_text())["created"]
+        t = dt.datetime.strptime(c, "%Y-%m-%dT%H:%MZ").replace(tzinfo=dt.timezone.utc)
+        return (utcnow() - t).total_seconds() / 3600
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def with_time_limit(seconds, fn):
+    """Kör fn men avbryter efter angiven tid, så att körningen aldrig fastnar."""
+    import signal
+
+    def stop(*_):
+        raise TimeoutError(f"tog längre än {seconds // 60} minuter")
+    old = signal.signal(signal.SIGALRM, stop)
+    signal.alarm(seconds)
+    try:
+        fn()
+    except TimeoutError as ex:
+        print(f"  avbröts: {ex}, behåller tidigare data")
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old)
+
+
 if __name__ == "__main__":
     DATA.mkdir(exist_ok=True)
-    update_wind()
-    update_temp()
+    manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+    age = data_age_h()
+    if manual and age is not None and age < FRESH_H:
+        print(f"Manuell körning och datan är {age:.1f} timmar gammal: hoppar över vind och vattentemperatur")
+    else:
+        update_wind()
+        with_time_limit(TEMP_BUDGET_S, update_temp)
     ensure_names()
     ensure_private()
