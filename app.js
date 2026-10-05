@@ -243,7 +243,7 @@ const MS=[[],[[0,.5,.5,1]],[[.5,1,1,.5]],[[0,.5,1,.5]],[[.5,0,1,.5]],[[.5,0,0,.5
   [[.5,0,0,.5]],[[.5,0,.5,1]],[[.5,0,1,.5],[0,.5,.5,1]],[[.5,0,1,.5]],[[0,.5,1,.5]],[[.5,1,1,.5]],[[0,.5,.5,1]],[]];
 // Slutna, utjämnade konturer runt alla punkter där M=1. Koordinater i halva punkter med
 // en ram på 2, så att PX=(v-2)*h ger läget i en canvas med skalan 2h per punkt.
-function traceLoops(M0,W0,H0){const W=W0+2,H=H0+2,M=new Uint8Array(W*H);for(let y=0;y<H0;y++)M.set(M0.subarray(y*W0,(y+1)*W0),(y+1)*W+1);
+function traceLoops(M0,W0,H0,r){r=r==null?3:r;const W=W0+2,H=H0+2,M=new Uint8Array(W*H);for(let y=0;y<H0;y++)M.set(M0.subarray(y*W0,(y+1)*W0),(y+1)*W+1);
   const segs=[];for(let y=0;y<H-1;y++){const r0=y*W,r1=r0+W;for(let xx=0;xx<W-1;xx++){
       const cs=(M[r0+xx]?8:0)|(M[r0+xx+1]?4:0)|(M[r1+xx+1]?2:0)|(M[r1+xx]?1:0);if(cs===0||cs===15)continue;
       for(const s of MS[cs])segs.push(2*xx+1+2*s[0],2*y+1+2*s[1],2*xx+1+2*s[2],2*y+1+2*s[3])}}
@@ -260,7 +260,7 @@ function traceLoops(M0,W0,H0){const W=W0+2,H=H0+2,M=new Uint8Array(W*H);for(let 
   const avg=(p,r)=>{const L2=p.length;if(L2<2*r+2)return p;const closed=p[0][0]===p[L2-1][0]&&p[0][1]===p[L2-1][1],o2=[];
     for(let i=0;i<L2;i++){let sx=0,sy=0,c2=0;for(let j=-r;j<=r;j++){let q=i+j;if(closed){q=(q+L2-1)%(L2-1)}else{if(q<0||q>=L2)continue}sx+=p[q][0];sy+=p[q][1];c2++}o2.push([sx/c2,sy/c2])}
     if(!closed){o2[0]=p[0];o2[L2-1]=p[L2-1]}return o2};
-  const out=lines.map(p=>smooth(avg(p,3)));out.W=W;out.H=H;return out}
+  const out=lines.map(p=>smooth(r?avg(p,r):p));out.W=W;out.H=H;return out}
 function fillLoops(x,loops,h,color){const PX=v=>(v-2)*h;x.fillStyle=color;x.beginPath();
   for(const p of loops){x.moveTo(PX(p[0][0]),PX(p[0][1]));for(let i=1;i<p.length;i++)x.lineTo(PX(p[i][0]),PX(p[i][1]));x.closePath()}x.fill("evenodd")}
 function strokeLoops(x,loops,h,color,width){const PX=v=>(v-2)*h,W=loops.W,H=loops.H,edge=q=>q[0]<2.6||q[1]<2.6||q[0]>2*W-2.6||q[1]>2*H-2.6;
@@ -301,12 +301,14 @@ function drawZones(R,vx0,vy0,vx1,vy1,mz,Z){const mg=4,cx0=Math.max(0,vx0-R.px0-m
     for(let b2=lo+1;b2<=hi;b2++)strokeLoops(x,traceLoops(lvl(db,b2),W0,H0),h,b2<=2?"rgba(30,90,150,.85)":"rgba(40,100,160,.55)",(b2<=2?1.2:.9)*dpr)}
   if(Z.priv){const P=crop(Z.priv),WAc=crop(R.water),M=new Uint8Array(n);for(let i=0;i<n;i++)M[i]=P[i]&&WAc[i]?1:0;
     const loops=traceLoops(M,W0,H0);fillLoops(x,loops,h,"rgba(70,56,50,.72)");strokeLoops(x,loops,h,"#281E1C",1.4*dpr)}}
-async function drawCoast(){const zz=map.getZoom(),cz=Math.min(13,Math.max(11,zz)),bnd=map.getBounds().pad(.04),
+let MASK_MAX=13;
+async function drawCoast(){const zz=map.getZoom(),cz=Math.min(MASK_MAX,Math.max(11,zz)),bnd=map.getBounds().pad(.04),
   nw=CRS.latLngToPoint(bnd.getNorthWest(),cz),se=CRS.latLngToPoint(bnd.getSouthEast(),cz),x0=Math.floor(nw.x),y0=Math.floor(nw.y),W0=Math.ceil(se.x)-x0,H0=Math.ceil(se.y)-y0;
   const R=await region(cz,x0,y0,W0,H0),dpr=window.devicePixelRatio||1;
   let k=Math.pow(2,zz-cz)*dpr;k=Math.min(k,4096/W0,4096/H0);const h=k/2;
   const x=overlayCanvas("coast",cz,x0,y0,W0,H0,k),LAND=new Uint8Array(W0*H0);for(let i=0;i<LAND.length;i++)LAND[i]=R.water[i]?0:1;
-  const loops=traceLoops(LAND,W0,H0);
+  // mild utjämning: tar bort trappstegen men behåller uddar och vikar (lite mer när man zoomat förbi maskens upplösning)
+  const loops=traceLoops(LAND,W0,H0,zz-cz>=1?2:1);
   // landyta innanför konturen, i sjökortsfärg (inte när vanlig karta är vald)
   if(S.land!=="karta"){const lc=LANDCOL[S.land];fillLoops(x,loops,h,`rgba(${lc[0]},${lc[1]},${lc[2]},.94)`)}
   strokeLoops(x,loops,h,"#15191D",1.5*dpr)}
@@ -439,7 +441,7 @@ $("loc").onclick=()=>{if(me){map.setView(me.getLatLng(),Math.max(map.getZoom(),1
   try{const G=await getJSON("data/djup.json"),dec=s=>{const b=atob(s),a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a};
     G.D=dec(G.d);G.M=dec(G.m);delete G.d;delete G.m;S.depth=G}catch(_){$("depthchip")&&($("depthchip").hidden=true);$("depthfind")&&($("depthfind").hidden=true)}
   try{const pi=await getJSON("mask/privat/info.json");S.privOk=true;S.privM=pi.meter||25}catch(_){$("privchip")&&($("privchip").hidden=true)}
-  try{const info=await getJSON("mask/info.json");const [w,s,e,n]=info.bounds;map.setMaxBounds(L.latLngBounds([s,w],[n,e]).pad(.4))}catch(_){}
+  try{const info=await getJSON("mask/info.json");if(info.zooms&&info.zooms.length)MASK_MAX=Math.min(15,Math.max(...info.zooms));const [w,s,e,n]=info.bounds;map.setMaxBounds(L.latLngBounds([s,w],[n,e]).pad(.4))}catch(_){}
   try{S.wind=await getJSON("data/wind.json");$("time").max=S.wind.times.length-1}catch(_){toast("Ingen vinddata än");$("when").textContent="Ingen vinddata"}
   try{S.temp=await getJSON("data/temp.json");const b=atob(S.temp.t),a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);S.T=a;smoothTemp()}catch(_){}
   setTime(nowIndex());schedule()})();

@@ -9,5 +9,5 @@ DATA = ROOT / "data"
 MASK = ROOT / "mask"
 CACHE = ROOT / ".cache"
 
-MASK_ZOOMS = range(9, 14)   # zoomnivåer för land/vattenmasken (13 = ca 10 m per pixel)
+MASK_ZOOMS = range(9, 15)   # zoomnivåer för land/vattenmasken (14 = ca 5 m per pixel)
 DAYS_BACK = 5                # dagar bakåt som sparas
