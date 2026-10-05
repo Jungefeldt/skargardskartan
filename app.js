@@ -15,6 +15,7 @@ map.createPane("tint").style.zIndex=300; map.getPane("tint").style.pointerEvents
 map.createPane("ov").style.zIndex=350; map.getPane("ov").style.pointerEvents="none";
 map.createPane("coast").style.zIndex=360; map.getPane("coast").style.pointerEvents="none";
 map.createPane("lbl").style.zIndex=640; map.getPane("lbl").style.pointerEvents="none";
+map.createPane("names").style.zIndex=660; map.getPane("names").style.pointerEvents="none";
 
 // Bild-lager vars innehåll ritas direkt i en canvas
 const CanvasOverlay=L.ImageOverlay.extend({_initImage(){const c=this._image=L.DomUtil.create("canvas","leaflet-image-layer overlay"+(this._zoomAnimated?" leaflet-zoom-animated":""));c.onselectstart=L.Util.falseFn;c.onmousemove=L.Util.falseFn}});
@@ -26,7 +27,7 @@ function hideCanvas(pane){pane=pane||"ov";if(overlays[pane]){map.removeLayer(ove
 const LANDCOL={gul:[244,226,160],vit:[246,246,242]};
 
 // ------------------------------------------------------------------ data
-const S={basis:"byar",land:"gul",wind:null,temp:null,T:null,layers:{la:true,temp:false,arrows:true,waves:true,priv:true},privOk:false,find:{on:false,maxK:0,tmin:null,tmax:null},src:"prognos",own:{dir:225,sp:8},ti:0};
+const S={basis:"byar",land:"gul",wind:null,temp:null,T:null,layers:{la:true,temp:false,arrows:true,waves:true,priv:true,names:true},privOk:false,find:{on:false,maxK:0,tmin:null,tmax:null},src:"prognos",own:{dir:225,sp:8},ti:0};
 async function getJSON(u){const r=await fetch(u,{cache:"no-cache"});if(!r.ok)throw new Error(u+" "+r.status);return r.json()}
 
 // ------------------------------------------------------------------ land/vatten-mask
@@ -128,7 +129,15 @@ const lblLayer=L.layerGroup().addTo(map);
 // ------------------------------------------------------------------ rita om
 // Skikten räknas i samma rutnät: lä (öppet vatten mot vinden) och vattentemperatur
 // per vattenpixel. Lä visas som yta, temperaturen som zoner med linjer emellan.
-const zoneLayer=L.layerGroup().addTo(map),seaLayer=L.layerGroup().addTo(map);
+const zoneLayer=L.layerGroup().addTo(map),seaLayer=L.layerGroup().addTo(map),nameLayer=L.layerGroup().addTo(map);
+// Egna namn från OpenStreetMap, ritade ovanpå alla lager så att de alltid syns.
+// Orter först, sedan större öar och fjärdar, mindre namn dyker upp när man zoomar in.
+const KIND_PRI={ort:0,land:1,vatten:2};
+function nameCands(){const N=S.names;if(!N)return[];const z=map.getZoom(),b=map.getBounds(),out=[];
+  for(const r of N){if(r[4]>z||!b.contains([r[1],r[2]]))continue;const fs=r[3]==="ort"?14:r[3]==="vatten"?13:13;
+    out.push({ll:L.latLng(r[1],r[2]),html:`<div class="nm nm-${r[3]}">${r[0].replace(/</g,"&lt;")}</div>`,w:r[0].length*fs*.58+8,h:fs+6,
+      score:1e6-(KIND_PRI[r[3]]*1e5)-r[4]*1e4+Math.min(9999,r[5]*100)})}
+  return out}
 let tRange=null,tStep=0.5,laT=null;
 function chooseStep(r){return r<=6?1:2}
 const fmtStep=v=>(Math.round(v*100)/100).toString().replace(".",",");
@@ -149,7 +158,7 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     lastR=R;
     // kustlinje: skarp vektorlinje i skärmens upplösning, som på ett sjökort
     await drawCoast();if(my!==seq)return;
-    if(!haveLa&&!haveT&&!privOn){hideCanvas();laR=null;laT=null;drawArrows(uiBoxes());legend();if(sel)sheet();return}
+    if(!haveLa&&!haveT&&!privOn){hideCanvas();laR=null;laT=null;drawArrows(placeNames(),true);legend();if(sel)sheet();return}
     // lä
     // riktningen avrundas till 5 grader; samma vy och riktning återanvänder beräkningen (snabb uppspelning)
     let F=null;if(haveLa){const dr=Math.round(w.wd/5)*5,key=[mz,R.px0,R.py0,R.W,R.H,dr].join("|");
@@ -188,8 +197,8 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
       // zongränser för temperaturen, som djupkurvor
       if(showT||findOn){const W2=R.W;for(let y=0;y<R.H-1;y++)for(let x=0;x<W2-1;x++){const i=y*W2+x,bnd=BAND[i];if(bnd===-999)continue;
           const r_=BAND[i+1],d_=BAND[i+W2];if((r_!==-999&&r_!==bnd)||(d_!==-999&&d_!==bnd)){const p=i*4;D[p]=11;D[p+1]=53;D[p+2]=80;D[p+3]=230}}}});
-    // etiketter: vindpilar först, sedan sjögång, sedan vattentemperatur, utan krockar
-    const boxes=drawArrows(uiBoxes());
+    // etiketter: namn först, sedan vindpilar, vattentemperatur och sjögång, utan krockar
+    const boxes=placeNames();drawArrows(boxes,true);
     if(showT||findOn)placeLabels(boxes,zoneCands(R,BAND,mz,vx0,vy0,vx1,vy1,b=>{const s=(b*tStep)+"–"+((b+1)*tStep)+"°";return{html:'<div class="zlbl">'+s+'</div>',w:s.length*7+6,h:16}},5,260,30),zoneLayer);
     if(showLa&&KARR&&S.layers.waves)placeLabels(boxes,zoneCands(R,KARR,mz,vx0,vy0,vx1,vy1,(k,i)=>{const h=wave(UF[i],F[i]),a=fmtWave(h,k),b2=LA_CLASSES[k][1].replace(" sjö","").toLowerCase();
       return{html:'<div class="slbl">'+waveIcon(k)+'<b>'+a+'</b><em>'+b2+'</em></div>',w:Math.max(a.length,b2.length)*7.2+14,h:46}},8,240,40),seaLayer);
@@ -251,17 +260,18 @@ async function drawCoast(){const zz=map.getZoom(),cz=Math.min(13,Math.max(11,zz)
 function uiBoxes(){const m=$("map").getBoundingClientRect(),out=[];
   document.querySelectorAll(".bar,.side,.panel:not(.hidden),.sheet.open,.leaflet-control-scale,.leaflet-control-attribution").forEach(el=>{const r=el.getBoundingClientRect();if(r.width&&r.height)out.push([r.left-m.left,r.top-m.top,r.right-m.left,r.bottom-m.top])});return out}
 // Lägger ut etiketter i prioritetsordning och hoppar över allt som skulle krocka.
-function placeLabels(boxes,cands,layer){cands.sort((a,b)=>b.score-a.score);const sz=map.getSize();
+function placeNames(){nameLayer.clearLayers();const boxes=uiBoxes();if(S.layers.names!==false)placeLabels(boxes,nameCands(),nameLayer,"names");return boxes}
+function placeLabels(boxes,cands,layer,pane){cands.sort((a,b)=>b.score-a.score);const sz=map.getSize();
   for(const c of cands){const p=map.latLngToContainerPoint(c.ll),bx=[p.x-c.w/2-3,p.y-c.h/2-2,p.x+c.w/2+3,p.y+c.h/2+2];
     if(bx[0]<2||bx[1]<2||bx[2]>sz.x-2||bx[3]>sz.y-2)continue;
     if(boxes.some(o=>bx[0]<o[2]&&bx[2]>o[0]&&bx[1]<o[3]&&bx[3]>o[1]))continue;boxes.push(bx);
-    L.marker(c.ll,{pane:"lbl",interactive:false,keyboard:false,icon:L.divIcon({className:"",html:c.html,iconSize:[0,0]})}).addTo(layer)}}
+    L.marker(c.ll,{pane:pane||"lbl",interactive:false,keyboard:false,icon:L.divIcon({className:"",html:c.html,iconSize:[0,0]})}).addTo(layer)}}
 let rT=null;const schedule=()=>{clearTimeout(rT);rT=setTimeout(redraw,60)};
 map.on("moveend",schedule);
 
 // ------------------------------------------------------------------ vindpilar
 const arrowLayer=L.layerGroup().addTo(map);
-function drawArrows(ui){arrowLayer.clearLayers();const boxes=(ui||[]).slice();if(!S.layers.arrows)return boxes;
+function drawArrows(ui,shared){arrowLayer.clearLayers();const boxes=shared?ui:(ui||[]).slice();if(!S.layers.arrows)return boxes;
   const add=(ll,wd,ws,gust,big)=>{const s=big?44:36,p=map.latLngToContainerPoint(ll),bx=[p.x-34,p.y-s/2,p.x+34,p.y+s/2+34];
     const sz=map.getSize();if(bx[0]<2||bx[1]<2||bx[2]>sz.x-2||bx[3]>sz.y-2)return;
     if(boxes.some(o=>bx[0]<o[2]&&bx[2]>o[0]&&bx[1]<o[3]&&bx[3]>o[1]))return;arrowAt(ll,wd,ws,gust,big);boxes.push(bx)};
@@ -361,6 +371,7 @@ $("loc").onclick=()=>{if(me){map.setView(me.getLatLng(),Math.max(map.getZoom(),1
 
 // ------------------------------------------------------------------ start
 (async()=>{
+  try{S.names=await getJSON("mask/namn.json")}catch(_){}
   try{const pi=await getJSON("mask/privat/info.json");S.privOk=true;S.privM=pi.meter||25}catch(_){$("privchip")&&($("privchip").hidden=true)}
   try{const info=await getJSON("mask/info.json");const [w,s,e,n]=info.bounds;map.setMaxBounds(L.latLngBounds([s,w],[n,e]).pad(.4))}catch(_){}
   try{S.wind=await getJSON("data/wind.json");$("time").max=S.wind.times.length-1}catch(_){toast("Ingen vinddata än");$("when").textContent="Ingen vinddata"}
