@@ -214,7 +214,7 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     hideCanvas();
     const showD=!!(S.depth&&Lyr.depth&&DB),pat=patMode&&!!KARR;
     drawZones(R,vx0,vy0,vx1,vy1,mz,{FOK,KARR:pat?null:KARR,KPAT:pat?KARR:null,BAND:(showT||findOn)?BAND:null,
-      tempFill:showT&&!showLa&&!findOn&&!showD,wdir:w?w.wd:null,DB:(showD||pat)&&DB?DB:null,depthFill:!!DB&&((showD&&!showLa&&!findOn)||pat),priv:privOn?R.priv:null});
+      tempFill:showT&&!showLa&&!findOn&&!showD,wdir:w?w.wd:null,FV:pat?F:null,UV:pat?UF:null,mpz:m,DB:(showD||pat)&&DB?DB:null,depthFill:!!DB&&((showD&&!showLa&&!findOn)||pat),priv:privOn?R.priv:null});
     // etiketter: namn först, sedan vindpilar, vattentemperatur och sjögång, utan krockar
     const boxes=placeNames();drawArrows(boxes,true);
     if(showT||findOn)placeLabels(boxes,zoneCands(R,BAND,mz,vx0,vy0,vx1,vy1,b=>{const s=(b*tStep)+"–"+((b+1)*tStep)+"°";return{html:'<div class="zlbl">'+s+'</div>',w:s.length*7+6,h:16}},5,260,30),zoneLayer);
@@ -287,8 +287,8 @@ function wavePattern(ctx,k,dpr,ox,oy,ang){const P=WAVE_PAT[k];if(!P)return null;
   waveLine(g,tw,th/2,P.a*dpr,48);g.stroke();
   // kammarna ligger tvärs mot vinden; mönstret är fast mot kartan och vrids efter vindriktningen
   const pat=ctx.createPattern(c,"repeat");if(pat.setTransform&&typeof DOMMatrix!=="undefined")pat.setTransform(new DOMMatrix().translateSelf(-ox,-oy).rotateSelf(ang||0));return pat}
-function wavePatternSVG(k){const P=WAVE_PAT[k];if(!P)return'<i style="background:#fff"></i>';const w=28,h=12;let d="";
-  for(let r=-1;r<=1;r++){const y0=h/2+r*P.s;for(let x0=0;x0<w;x0+=P.l)for(let s=0;s<=24;s++){const t=2*Math.PI*s/24,X=x0+P.l*(t-WAVE_Q*Math.sin(t))/(2*Math.PI),Y=y0-P.a*Math.cos(t);d+=(s?" L":" M")+X.toFixed(1)+" "+Y.toFixed(1)}}
+function wavePatternSVG(k){const P=WAVE_PAT[k];if(!P)return'<i style="background:#fff"></i>';const w=28,h=12,gap=[0,5,8,12,16][k],bow=[0,1,2,3,4][k];let d="";
+  for(let x0=2;x0<w;x0+=gap)d+=` M${x0} 0 Q${x0+bow*2} ${h/2} ${x0} ${h}`;
   return`<svg width="${w}" height="${h}" style="vertical-align:-2px;border:1px solid rgba(0,0,0,.2);border-radius:3px;background:#D6E9F5"><path d="${d}" fill="none" stroke="#11171c" stroke-opacity="${P.o}" stroke-width="${P.w}"/></svg>`}
 // Zonerna i vattnet som mjuka ytor med tunna konturlinjer: lä och sjögång, temperatur, Hitta plats och hemfridszoner
 function drawZones(R,vx0,vy0,vx1,vy1,mz,Z){const mg=4,cx0=Math.max(0,vx0-R.px0-mg),cy0=Math.max(0,vy0-R.py0-mg),cx1=Math.min(R.W,vx1-R.px0+mg),cy1=Math.min(R.H,vy1-R.py0+mg),W0=cx1-cx0,H0=cy1-cy0;
@@ -310,13 +310,46 @@ function drawZones(R,vx0,vy0,vx1,vy1,mz,Z){const mg=4,cx0=Math.max(0,vx0-R.px0-m
   else if(Z.tempFill&&tb){let lo=1e9,hi=-1e9;for(let i=0;i<n;i++){if(tb[i]===-999)continue;if(tb[i]<lo)lo=tb[i];if(tb[i]>hi)hi=tb[i]}
     if(lo<=hi){const lev=[];for(let b2=lo;b2<=hi;b2++){let kk=Math.round(((b2+.5)*tStep)/24*255);kk=kk<0?0:kk>255?255:kk;lev.push([b2,mixc([TLUT[kk*3],TLUT[kk*3+1],TLUT[kk*3+2]],.6)])}
       bands(tb,lev,null,0)}}
-  // sjögång som vågmönster ovanpå djupet (eller ovanpå vattnet om djup saknas)
-  if(Z.KPAT){const A=dil(crop(Z.KPAT)),PX=v=>(v-2)*h;
-    for(let kk=1;kk<=4;kk++){const pat=wavePattern(x,kk,dpr,(R.px0+cx0)*k,(R.py0+cy0)*k,Z.wdir==null?0:Z.wdir+180),L1=traceLoops(lvl(A,kk),W0,H0);if(!L1.length)continue;
-      const L2=kk<4?traceLoops(lvl(A,kk+1),W0,H0):[];x.fillStyle=pat;x.beginPath();
-      for(const p of L1.concat(L2)){x.moveTo(PX(p[0][0]),PX(p[0][1]));for(let i=1;i<p.length;i++)x.lineTo(PX(p[i][0]),PX(p[i][1]));x.closePath()}x.fill("evenodd");
+  // Sjögång som vågkammar ovanpå djupet: linjerna ligger tvärs mot vinden, buktar ut i vindens
+  // riktning där sjön är utvecklad och släpar efter i lä bakom öar och stränder. Avståndet mellan
+  // linjerna växer med våghöjden. Linjerna är nivåkurvor för en "fas" som räknas per punkt.
+  if(Z.KPAT&&Z.FV&&Z.UV){const A=dil(crop(Z.KPAT)),PX=v=>(v-2)*h,sc=Math.pow(2,map.getZoom()-mz),mz_m=Z.mpz;
+    const th=(Z.wdir+180)*Math.PI/180,dx=Math.sin(th),dy=-Math.cos(th),gx0=R.px0+cx0,gy0=R.py0+cy0;
+    // fetch och vind för utsnittet (land får grannens värden, så att linjerna fortsätter jämnt in mot stranden)
+    const Fc=new Float32Array(n),Uc=new Float32Array(n),ok=new Uint8Array(n);
+    for(let y=0;y<H0;y++){const s=(cy0+y)*R.W+cx0;for(let xx=0;xx<W0;xx++){const i=y*W0+xx;if(R.water[s+xx]){Fc[i]=Z.FV[s+xx];Uc[i]=Z.UV[s+xx];ok[i]=1}}}
+    for(let pass=0;pass<4;pass++)for(let y=1;y<H0-1;y++)for(let xx=1;xx<W0-1;xx++){const i=y*W0+xx;if(ok[i])continue;
+      for(const j of [i-1,i+1,i-W0,i+W0])if(ok[j]===1){Fc[i]=Fc[j];Uc[i]=Uc[j];ok[i]=2;break}}
+    // avstånd mellan kammar (som 1/avstånd) och eftersäpning i lä, utjämnade över några hundra meter
+    const inv=new Float32Array(n),bow=new Float32Array(n);
+    for(let i=0;i<n;i++){const F2=Math.min(Fc[i],CAP_M),Hs=Math.min(wave(Uc[i],F2),1.4),lamPx=Math.max(4*sc,9+30*Math.sqrt(Hs/1.4));
+      inv[i]=sc/(lamPx*mz_m);bow[i]=(120+520*Math.sqrt(Hs))*(1-Math.sqrt(F2/CAP_M))}
+    const blur=(A2,r)=>{const T=new Float32Array(n);for(let pass=0;pass<2;pass++){
+        for(let y=0;y<H0;y++){let s2=0,c2=0;const o=y*W0;for(let xx=0;xx<Math.min(r,W0);xx++){s2+=A2[o+xx];c2++}
+          for(let xx=0;xx<W0;xx++){const a2=xx+r,b2=xx-r-1;if(a2<W0){s2+=A2[o+a2];c2++}if(b2>=0){s2-=A2[o+b2];c2--}T[o+xx]=s2/c2}}
+        for(let xx=0;xx<W0;xx++){let s2=0,c2=0;for(let y=0;y<Math.min(r,H0);y++){s2+=T[y*W0+xx];c2++}
+          for(let y=0;y<H0;y++){const a2=y+r,b2=y-r-1;if(a2<H0){s2+=T[a2*W0+xx];c2++}if(b2>=0){s2-=T[b2*W0+xx];c2--}A2[y*W0+xx]=s2/c2}}}};
+    const rb=Math.max(6,Math.round(300/mz_m));blur(inv,rb);blur(bow,rb);
+    // fasen räknas steg för steg i vindens riktning, så att linjerna aldrig korsar varandra
+    const P=new Float32Array(n),inv0=sc/(20*mz_m),ux=-dx,uy=-dy;
+    if(Math.abs(ux)>=Math.abs(uy)){const sx=ux>0?1:-1,tt=1/Math.abs(ux),ddy=uy*tt;
+      for(let k2=0;k2<W0;k2++){const xx=sx>0?W0-1-k2:k2,px=xx+sx,edge=px<0||px>=W0;
+        for(let y=0;y<H0;y++){const i=y*W0+xx;const s0=((gx0+xx)*dx+(gy0+y)*dy)*mz_m*inv0;
+          if(edge){P[i]=s0;continue}const yy=y+ddy;if(yy<0||yy>H0-1){P[i]=s0;continue}const y0=yy|0,f=yy-y0,y1=y0+1<H0?y0+1:y0;
+          P[i]=P[y0*W0+px]*(1-f)+P[y1*W0+px]*f+tt*mz_m*inv[i]}}}
+    else{const sy=uy>0?1:-1,tt=1/Math.abs(uy),ddx=ux*tt;
+      for(let k2=0;k2<H0;k2++){const y=sy>0?H0-1-k2:k2,py=y+sy,edge=py<0||py>=H0;
+        for(let xx=0;xx<W0;xx++){const i=y*W0+xx;const s0=((gx0+xx)*dx+(gy0+y)*dy)*mz_m*inv0;
+          if(edge){P[i]=s0;continue}const x2=xx+ddx;if(x2<0||x2>W0-1){P[i]=s0;continue}const x0=x2|0,f=x2-x0,x1=x0+1<W0?x0+1:x0;
+          P[i]=P[py*W0+x0]*(1-f)+P[py*W0+x1]*f+tt*mz_m*inv[i]}}}
+    const M=new Uint8Array(n);for(let i=0;i<n;i++)M[i]=Math.floor(P[i]-bow[i]*inv[i])&1;
+    const crest=traceLoops(M,W0,H0,3);
+    for(let kk=1;kk<=4;kk++){const P=WAVE_PAT[kk],L1=traceLoops(lvl(A,kk),W0,H0);if(!L1.length)continue;
+      const L2=kk<4?traceLoops(lvl(A,kk+1),W0,H0):[];x.save();x.beginPath();
+      for(const p of L1.concat(L2)){x.moveTo(PX(p[0][0]),PX(p[0][1]));for(let i=1;i<p.length;i++)x.lineTo(PX(p[i][0]),PX(p[i][1]));x.closePath()}
+      x.clip("evenodd");strokeLoops(x,crest,h,`rgba(15,20,25,${P.o})`,P.w*1.15*dpr);x.restore();
       // tunn kontur runt varje fält av sjögång
-      strokeLoops(x,L1,h,"rgba(15,20,25,.62)",.9*dpr)}}
+      strokeLoops(x,L1,h,"rgba(15,20,25,.5)",.8*dpr)}}
   // temperaturgränser som tunna linjer, som djupkurvor
   if(tb){let lo=1e9,hi=-1e9;for(let i=0;i<n;i++){if(tb[i]===-999)continue;if(tb[i]<lo)lo=tb[i];if(tb[i]>hi)hi=tb[i]}
     for(let b2=lo+1;b2<=hi;b2++)strokeLoops(x,traceLoops(lvl(tb,b2),W0,H0),h,"#0B3550",1.3*dpr)}
