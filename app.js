@@ -85,7 +85,7 @@ function waveIcon(k){const a=[1,2,3,4,5][k],y=8,c=WAVE_COL[k];
 // Våghöjd som text, avrundad men alltid inom klassens gränser
 const fmtWave=(h,k)=>{if(k===0)return"under 0,1 m";const lo=[0,.1,.3,.5,1][k],hi=[0,.2,.4,.9,99][k];return f1(Math.min(hi,Math.max(lo,Math.round(h*10)/10)))+" m"};
 const LA_RGBA=LA_CLASSES.map(c=>c[2].match(/[\d.]+/g).map(Number));
-let laR=null,laF=null,laWind=null,laU=null,fetchCache={key:null,F:null},lastR=null;
+let laR=null,laF=null,laWind=null,laU=null,fetchCache={key:null,F:null},lastR=null,lastSW=null;
 
 // ------------------------------------------------------------------ vind på en plats och tid
 let KI=null;
@@ -123,6 +123,37 @@ function depthAt(lat,lon){const G=S.depth;if(!G)return null;let fy=(lat-G.lat0)/
   return((D[y0*W+x0]*(1-tx)+D[y0*W+x1]*tx)*(1-ty)+(D[y1*W+x0]*(1-tx)+D[y1*W+x1]*tx)*ty)/2}
 function depthMeasured(lat,lon){const G=S.depth;if(!G)return false;const y=Math.round((lat-G.lat0)/G.dlat),x=Math.round((lon-G.lon0)/G.dlon);
   if(y<0||x<0||y>=G.ny||x>=G.nx)return false;const i=y*G.nx+x;return !!(G.M[i>>3]&(128>>(i&7)))}
+
+// ------------------------------------------------------------------ SWAN
+// Vågfält beräknade med vågmodellen SWAN för ett antal vindriktningar och vindstyrkor.
+// För aktuell vind väljs närmaste riktning och de två närmaste styrkorna, och våghöjden
+// interpoleras mellan dem. Används för vågmönstret när det finns för området.
+const swanFiles=new Map();
+function swanFile(name){if(swanFiles.has(name))return swanFiles.get(name);
+  const p=getJSON("data/swan/"+name+".json").then(r=>{const dec=s=>{const b=atob(s),a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a};
+    return{hs:dec(r.hs),tm:dec(r.tm),di:dec(r.di)}}).catch(()=>null);swanFiles.set(name,p);return p}
+const swanName=(d,u)=>"d"+String(Math.round(d*10)).padStart(4,"0")+"_s"+String(u).padStart(2,"0");
+async function swanCase(wd,U){const X=S.swan;if(!X)return null;const done=new Set(X.done);
+  let best=null,bd=1e9;for(const d of X.dirs){const dd=Math.abs(((wd-d+540)%360)-180);if(dd<bd&&X.speeds.some(u=>done.has(swanName(d,u)))){bd=dd;best=d}}
+  if(best==null)return null;const sp=X.speeds.filter(u=>done.has(swanName(best,u)));
+  let a=sp[0],b=sp[0];for(const u of sp){if(u<=U)a=u;if(u>=U&&b<U)b=u}if(U>=sp[sp.length-1])a=b=sp[sp.length-1];if(U<=sp[0])a=b=sp[0];
+  const [A,B]=await Promise.all([swanFile(swanName(best,a)),swanFile(swanName(best,b))]);if(!A||!B)return null;
+  const t=b>a?(U-a)/(b-a):0,scale=a===b?U/a:1;return{A,B,t,scale,dir:best}}
+// SWAN-fältet samplat på kartans rutnät: våghöjd (m), period (s) och vågriktning (grader, varifrån)
+function swanSample(R,mz,C){const X=S.swan,N=R.W*R.H,H=new Float32Array(N).fill(-1),T=new Float32Array(N),D=new Float32Array(N);
+  const rowF=new Float32Array(R.H),colF=new Float32Array(R.W);
+  for(let y=0;y<R.H;y++){const lat=CRS.pointToLatLng(L.point(R.px0,R.py0+y+.5),mz).lat;rowF[y]=(lat-X.lat0)/X.dlat}
+  for(let x=0;x<R.W;x++){const lon=CRS.pointToLatLng(L.point(R.px0+x+.5,R.py0),mz).lng;colF[x]=(lon-X.lon0)/X.dlon}
+  const nx=X.nx,ny=X.ny,v=(arr,i)=>arr[i];
+  for(let y=0;y<R.H;y++){const fy=rowF[y];if(fy<0||fy>ny-1.001)continue;const y0=fy|0,ty=fy-y0;
+    for(let x=0;x<R.W;x++){const i=y*R.W+x;if(!R.water[i])continue;const fx=colF[x];if(fx<0||fx>nx-1.001)continue;const x0=fx|0,tx=fx-x0;
+      let sh=0,st=0,sw=0,sx=0,sy=0;
+      for(const [j,wt] of [[y0*nx+x0,(1-tx)*(1-ty)],[y0*nx+x0+1,tx*(1-ty)],[(y0+1)*nx+x0,(1-tx)*ty],[(y0+1)*nx+x0+1,tx*ty]]){
+        const ha=C.A.hs[j],hb=C.B.hs[j];if(ha===255||hb===255||wt<=0)continue;
+        sh+=wt*((ha*(1-C.t)+hb*C.t)/100);st+=wt*((C.A.tm[j]*(1-C.t)+C.B.tm[j]*C.t)/25);
+        const a=(C.A.di[j]/254*360)*Math.PI/180;sx+=wt*Math.sin(a);sy+=wt*Math.cos(a);sw+=wt}
+      if(sw>0){H[i]=sh/sw*C.scale;T[i]=st/sw;let d=Math.atan2(sx,sy)*180/Math.PI;if(d<0)d+=360;D[i]=d}}}
+  return{H,T,D}}
 
 // ------------------------------------------------------------------ vattentemperatur
 function tempAt(lat,lon,di){const G=S.temp;if(!G||di<0)return null;let fy=(lat-G.lat0)/G.dlat,fx=(lon-G.lon0)/G.dlon;
@@ -205,21 +236,25 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
       for(let x=0;x<R.W;x++){const lon=CRS.pointToLatLng(L.point(R.px0+x+.5,R.py0),mz).lng;colF[x]=Math.max(0,Math.min(G.nx-1.001,(lon-G.lon0)/G.dlon))}
       for(let y=0;y<R.H;y++){const fy=rowF[y],ya=fy|0,ty=fy-ya,r0=ya*GW,r1=r0+GW;for(let x=0;x<R.W;x++){const i=y*R.W+x;if(!WA[i])continue;const fx=colF[x],xa=fx|0,tx=fx-xa;
           const d=((Dg[r0+xa]*(1-tx)+Dg[r0+xa+1]*tx)*(1-ty)+(Dg[r1+xa]*(1-tx)+Dg[r1+xa+1]*tx)*ty)/2;DV[i]=d;DB[i]=depthBand(d)}}}
+    // SWAN-fält för vågmönstret, om det finns för området
+    let SW=null;if(patMode&&S.swan){const C=await swanCase(w.wd,S.src==="egen"?S.own.sp:calcU(w));if(my!==seq)return;if(C){SW=swanSample(R,mz,C);SW.dir=C.dir}}
+    lastSW=SW?{R,mz,...SW}:null;
     // klasser per vattenpunkt (används både för ytorna och etiketterna)
     const showLa=haveLa&&Lyr.la,showT=haveT&&Lyr.temp,findOn=F_.on&&haveLa&&haveT;
+    const HS=i=>SW&&SW.H[i]>=0?SW.H[i]:wave(UF[i],F[i]);
     let KARR=null,FOK=null;
-    if(showLa&&!findOn){KARR=new Int16Array(N).fill(-999);for(let i=0;i<N;i++){if(!WA[i])continue;let k=0;const h=wave(UF[i],F[i]);while(h>=LA_CLASSES[k][0])k++;KARR[i]=k}}
+    if(showLa&&!findOn){KARR=new Int16Array(N).fill(-999);for(let i=0;i<N;i++){if(!WA[i])continue;let k=0;const h=HS(i);while(h>=LA_CLASSES[k][0])k++;KARR[i]=k}}
     if(findOn){FOK=new Int16Array(N).fill(-999);for(let i=0;i<N;i++){if(!WA[i])continue;let k=0;const h=wave(UF[i],F[i]);while(h>=LA_CLASSES[k][0])k++;const tv=TV[i];
         FOK[i]=k<=F_.maxK&&tv>=F_.tmin&&tv<=F_.tmax&&!(S.privOk&&R.priv[i])&&(!useDF||(DV[i]>=F_.dmin&&DV[i]<=F_.dmax))?1:0}}
     hideCanvas();
     const showD=!!(S.depth&&Lyr.depth&&DB),pat=patMode&&!!KARR;
     drawZones(R,vx0,vy0,vx1,vy1,mz,{FOK,KARR:pat?null:KARR,KPAT:pat?KARR:null,BAND:(showT||findOn)?BAND:null,
-      tempFill:showT&&!showLa&&!findOn&&!showD,wdir:w?w.wd:null,FV:pat?F:null,UV:pat?UF:null,mpz:m,DB:(showD||pat)&&DB?DB:null,depthFill:!!DB&&((showD&&!showLa&&!findOn)||pat),priv:privOn?R.priv:null});
+      tempFill:showT&&!showLa&&!findOn&&!showD,wdir:w?w.wd:null,SW:pat?SW:null,FV:pat?F:null,UV:pat?UF:null,mpz:m,DB:(showD||pat)&&DB?DB:null,depthFill:!!DB&&((showD&&!showLa&&!findOn)||pat),priv:privOn?R.priv:null});
     // etiketter: namn först, sedan vindpilar, vattentemperatur och sjögång, utan krockar
     const boxes=placeNames();drawArrows(boxes,true);
     if(showT||findOn)placeLabels(boxes,zoneCands(R,BAND,mz,vx0,vy0,vx1,vy1,b=>{const s=(b*tStep)+"–"+((b+1)*tStep)+"°";return{html:'<div class="zlbl">'+s+'</div>',w:s.length*7+6,h:16}},5,260,30),zoneLayer);
     if(showD)placeLabels(boxes,zoneCands(R,DB,mz,vx0,vy0,vx1,vy1,b=>{const s=depthTxt(b);return{html:'<div class="dlbl">'+s+'</div>',w:s.length*6.6+6,h:15}},5,280,30),zoneLayer);
-    if(showLa&&KARR&&S.layers.waves)placeLabels(boxes,zoneCands(R,KARR,mz,vx0,vy0,vx1,vy1,(k,i)=>{const h=wave(UF[i],F[i]),a=fmtWave(h,k),b2=LA_CLASSES[k][1].replace(" sjö","").toLowerCase();
+    if(showLa&&KARR&&S.layers.waves)placeLabels(boxes,zoneCands(R,KARR,mz,vx0,vy0,vx1,vy1,(k,i)=>{const h=HS(i),a=fmtWave(h,k),b2=LA_CLASSES[k][1].replace(" sjö","").toLowerCase();
       return{html:'<div class="slbl">'+waveIcon(k)+'<b>'+a+'</b><em>'+b2+'</em></div>',w:Math.max(a.length,b2.length)*7.2+14,h:46}},8,240,40),seaLayer);
     legend();if(sel)sheet()}
   catch(e){console.error(e)}
@@ -292,6 +327,53 @@ function wavePattern(ctx,k,dpr,ox,oy,ang){const P=WAVE_PAT[k];if(!P)return null;
 function wavePatternSVG(k){const P=WAVE_PAT[k];if(!P)return'<i style="background:#fff"></i>';const w=28,h=12,gap=[0,5,8,12,16][k],bow=[0,1,2,3,4][k];let d="";
   for(let x0=2;x0<w;x0+=gap)d+=` M${x0} 0 Q${x0+bow*2} ${h/2} ${x0} ${h}`;
   return`<svg width="${w}" height="${h}" style="vertical-align:-2px;border:1px solid rgba(0,0,0,.2);border-radius:3px;background:#D6E9F5"><path d="${d}" fill="none" stroke="#11171c" stroke-opacity="${CREST_O[k]}" stroke-width="${CREST_W[k]}"/></svg>`}
+// Vågkammar som följer SWAN:s vågriktning: jämnt fördelade linjer som hela tiden ligger tvärs
+// mot vågornas gång. Där vågorna böjer sig (mot grunt vatten, runt uddar och in i lä) böjer sig
+// linjerna med. Avståndet mellan linjerna och deras tjocklek följer våghöjden.
+function drawSwanCrests(x,Z,R,cx0,cy0,W0,H0,k,h,dpr,mz,A,lvl){const sc=Math.pow(2,map.getZoom()-mz),n=W0*H0,SW=Z.SW;
+  const Hc=new Float32Array(n).fill(-1),cxv=new Float32Array(n),cyv=new Float32Array(n);
+  for(let y=0;y<H0;y++){const s=(cy0+y)*R.W+cx0;for(let xx=0;xx<W0;xx++){const i=y*W0+xx,j=s+xx;if(SW.H[j]<0)continue;Hc[i]=SW.H[j];
+    const b=(SW.D[j]+180)*Math.PI/180;cxv[i]=Math.cos(b);cyv[i]=Math.sin(b)}}   // kamriktning = tvärs mot gångriktningen
+  // jämna ut riktningsfältet lite (som dubbelvinkel, så att motsatta riktningar inte tar ut varandra)
+  const c2=new Float32Array(n),s2=new Float32Array(n);for(let i=0;i<n;i++){c2[i]=cxv[i]*cxv[i]-cyv[i]*cyv[i];s2[i]=2*cxv[i]*cyv[i]}
+  const bl=(a,r)=>{const T=new Float32Array(n);for(let y=0;y<H0;y++){let s=0,c=0;const o=y*W0;for(let xx=0;xx<Math.min(r,W0);xx++){s+=a[o+xx];c++}
+      for(let xx=0;xx<W0;xx++){if(xx+r<W0){s+=a[o+xx+r];c++}if(xx-r-1>=0){s-=a[o+xx-r-1];c--}T[o+xx]=s/c}}
+    for(let xx=0;xx<W0;xx++){let s=0,c=0;for(let y=0;y<Math.min(r,H0);y++){s+=T[y*W0+xx];c++}
+      for(let y=0;y<H0;y++){if(y+r<H0){s+=T[(y+r)*W0+xx];c++}if(y-r-1>=0){s-=T[(y-r-1)*W0+xx];c--}a[y*W0+xx]=s/c}}};
+  const rr=Math.max(1,Math.round(2/sc));bl(c2,rr);bl(s2,rr);
+  for(let i=0;i<n;i++){const a=Math.atan2(s2[i],c2[i])/2;cxv[i]=Math.cos(a);cyv[i]=Math.sin(a)}
+  const sep=i=>(9+30*Math.sqrt(Math.min(Math.max(Hc[i],0),1.4)/1.4))/sc;            // avstånd mellan kammar i kartpunkter
+  const at=(px,py)=>{const xx=px|0,yy=py|0;return xx>=0&&yy>=0&&xx<W0&&yy<H0?yy*W0+xx:-1};
+  // rutnät för att hålla avstånd mellan linjerna
+  const cs=Math.max(2,4/sc),gw=Math.ceil(W0/cs)+1,gh=Math.ceil(H0/cs)+1,grid=new Array(gw*gh);
+  const near=(px,py,d)=>{const gx=(px/cs)|0,gy=(py/cs)|0,r=Math.ceil(d/cs);for(let yy=Math.max(0,gy-r);yy<=Math.min(gh-1,gy+r);yy++)for(let xx=Math.max(0,gx-r);xx<=Math.min(gw-1,gx+r);xx++){
+      const g=grid[yy*gw+xx];if(!g)continue;for(let q=0;q<g.length;q+=2){const ddx=g[q]-px,ddy=g[q+1]-py;if(ddx*ddx+ddy*ddy<d*d)return true}}return false};
+  const add=(px,py)=>{const j=((py/cs)|0)*gw+((px/cs)|0);(grid[j]||(grid[j]=[])).push(px,py)};
+  const lines=[],step=.6;
+  const trace=(sx,sy)=>{const pts=[[sx,sy]];for(const dir of [1,-1]){let px=sx,py=sy,i0=at(px,py),vx=cxv[i0]*dir,vy=cyv[i0]*dir;
+      for(let s=0;s<6000;s++){const i=at(px,py);if(i<0||Hc[i]<0.1)break;let ux=cxv[i],uy=cyv[i];if(ux*vx+uy*vy<0){ux=-ux;uy=-uy}
+        const mx=px+ux*step*.5,my=py+uy*step*.5,j=at(mx,my);if(j<0||Hc[j]<0.1)break;let wx=cxv[j],wy=cyv[j];if(wx*ux+wy*uy<0){wx=-wx;wy=-wy}
+        const nx2=px+wx*step,ny2=py+wy*step;if(near(nx2,ny2,sep(i)*.5))break;px=nx2;py=ny2;vx=wx;vy=wy;
+        if(dir>0)pts.push([px,py]);else pts.unshift([px,py])}}
+    return pts};
+  // frön: börja där vågorna är högst, lägg sedan nya frön ett linjeavstånd ut från varje färdig linje
+  const cand=[];for(let y=2;y<H0;y+=Math.max(3,(6/sc)|0))for(let xx=2;xx<W0;xx+=Math.max(3,(6/sc)|0)){const i=y*W0+xx;if(Hc[i]>=0.1)cand.push(i)}
+  cand.sort((a,b)=>Hc[b]-Hc[a]);const queue=[];let ci=0;
+  for(let guard=0;guard<20000;guard++){let s=null;
+    while(queue.length&&!s){const q=queue.shift(),i=at(q[0],q[1]);if(i>=0&&Hc[i]>=0.1&&!near(q[0],q[1],sep(i)*.95))s=q}
+    while(!s&&ci<cand.length){const i=cand[ci++],px=i%W0+.5,py=(i/W0|0)+.5;if(!near(px,py,sep(i)*.95))s=[px,py]}
+    if(!s)break;const pts=trace(s[0],s[1]);if(pts.length<4)continue;
+    for(const p of pts)add(p[0],p[1]);lines.push(pts);
+    for(let q=0;q<pts.length;q+=6){const p=pts[q],i=at(p[0],p[1]);if(i<0)continue;const d=sep(i),nx3=-cyv[i],ny3=cxv[i];
+      queue.push([p[0]+nx3*d,p[1]+ny3*d],[p[0]-nx3*d,p[1]-ny3*d])}}
+  // rita varje linje med tjocklek efter sjögångsklass (bitvis)
+  const cls=i=>{const v=Hc[i];let kk=0;while(kk<4&&v>=LA_CLASSES[kk][0])kk++;return kk};
+  for(let kk=1;kk<=4;kk++){x.beginPath();x.lineWidth=CREST_W[kk]*dpr;x.strokeStyle=`rgba(15,20,25,${CREST_O[kk]})`;x.lineCap="round";x.lineJoin="round";
+    for(const pts of lines){let pen=false;for(const p of pts){const i=at(p[0],p[1]);const ok=i>=0&&cls(i)===kk;
+        if(ok){if(pen)x.lineTo(p[0]*k,p[1]*k);else{x.moveTo(p[0]*k,p[1]*k);pen=true}}else pen=false}}
+    x.stroke()}
+  // tunn kontur runt varje fält av sjögång
+  for(let kk=1;kk<=4;kk++){const L1=traceLoops(lvl(A,kk),W0,H0);if(L1.length)strokeLoops(x,L1,h,"rgba(15,20,25,.5)",.8*dpr)}}
 // Zonerna i vattnet som mjuka ytor med tunna konturlinjer: lä och sjögång, temperatur, Hitta plats och hemfridszoner
 function drawZones(R,vx0,vy0,vx1,vy1,mz,Z){const mg=4,cx0=Math.max(0,vx0-R.px0-mg),cy0=Math.max(0,vy0-R.py0-mg),cx1=Math.min(R.W,vx1-R.px0+mg),cy1=Math.min(R.H,vy1-R.py0+mg),W0=cx1-cx0,H0=cy1-cy0;
   if(W0<4||H0<4){hideCanvas("zones");return}
@@ -315,7 +397,8 @@ function drawZones(R,vx0,vy0,vx1,vy1,mz,Z){const mg=4,cx0=Math.max(0,vx0-R.px0-m
   // Sjögång som vågkammar ovanpå djupet: linjerna ligger tvärs mot vinden, buktar ut i vindens
   // riktning där sjön är utvecklad och släpar efter i lä bakom öar och stränder. Avståndet mellan
   // linjerna växer med våghöjden. Linjerna är nivåkurvor för en "fas" som räknas per punkt.
-  if(Z.KPAT&&Z.FV&&Z.UV){const A=dil(crop(Z.KPAT)),PX=v=>(v-2)*h,sc=Math.pow(2,map.getZoom()-mz),mz_m=Z.mpz;
+  if(Z.KPAT&&Z.SW){drawSwanCrests(x,Z,R,cx0,cy0,W0,H0,k,h,dpr,mz,dil(crop(Z.KPAT)),lvl);}
+  else if(Z.KPAT&&Z.FV&&Z.UV){const A=dil(crop(Z.KPAT)),PX=v=>(v-2)*h,sc=Math.pow(2,map.getZoom()-mz),mz_m=Z.mpz;
     const th=(Z.wdir+180)*Math.PI/180,dx=Math.sin(th),dy=-Math.cos(th),gx0=R.px0+cx0,gy0=R.py0+cy0;
     // fetch och vind för utsnittet (land får grannens värden, så att linjerna fortsätter jämnt in mot stranden)
     const Fc=new Float32Array(n),Uc=new Float32Array(n),ok=new Uint8Array(n);
@@ -454,6 +537,7 @@ $("explain").onclick=()=>{let h=`<h3>Färger för lä och sjögång</h3><p class
     <table class="deftab"><tr><th>Klass</th><th>Våg</th><th>Så känns det</th></tr>`+LA_CLASSES.map((c,i)=>`<tr><td><i style="background:${c[2]}"></i>${c[1]}</td><td>${LA_DEF[i][0]}</td><td>${LA_DEF[i][1]}</td></tr>`).join("")+`</table>
     <h3>Räkna på byar eller medelvind</h3><p class="note" style="margin-top:2px"><b>Byar</b> (förvalt) räknar vågorna på den starkaste vinden i prognosen. Det ger en försiktig bild, bra när du ska ligga still och fiska. <b>Medelvind</b> stämmer bättre med hur vågorna oftast blir, men underskattar läget när det är byigt.</p>
     <h3>Vindstyrka (SMHI)</h3><table class="deftab"><tr><th>Benämning</th><th>m/s</th></tr><tr><td>Lugnt</td><td>0–0,2</td></tr><tr><td>Svag vind</td><td>0,3–3</td></tr><tr><td>Måttlig vind</td><td>4–7</td></tr><tr><td>Frisk vind</td><td>8–13</td></tr><tr><td>Hård vind</td><td>14–19</td></tr><tr><td>Mycket hård vind</td><td>20–24</td></tr><tr><td>Storm</td><td>25–32</td></tr></table>
+    <h3>Vågmönster</h3><p class="note" style="margin-top:2px">Varje linje är en vågkam och ligger tvärs mot vågornas gång. Där det finns beräkningar från vågmodellen SWAN (TU Delft) följer linjerna modellens vågriktning, som tar hänsyn till lä bakom öar, refraktion mot grunt vatten och diffraktion runt uddar. Tätare och tunnare linjer betyder mindre vågor, glesare och kraftigare linjer större vågor.</p>
     <h3>Djup</h3><p class="note" style="margin-top:2px">Djupzonerna kommer från EMODnet Bathymetry (DTM 2024). I svenska vatten är underlaget medvetet glesat av sekretesskäl, så djupen är ungefärliga: bra för att skilja grunda vikar från djupa fjärdar, men enskilda grund, kanter och smala sund syns inte. "Nära lodning" betyder att det finns en verklig mätning i närheten, "uppskattat" att djupet är uträknat från omgivningen.</p>
     <p class="note">Uppskattningen tar inte hänsyn till dyning, strömmar eller båttrafik, och vågor böjer runt små öar. Använd den som stöd, inte för navigering.</p>`;
   $("sheetc").innerHTML=h;$("sheet").classList.add("open")};
@@ -485,6 +569,8 @@ function sheet(){const ll=sel,W=S.wind,w=W?windAt(ll.lat,ll.lng,S.ti):null,di=te
   if(w)h+=`<dt>Vind${S.src==="egen"?" (prognos)":""}</dt><dd>${dirName(w.wd)} ${f0(w.ws)} m/s${w.gust!=null?", byar "+f0(w.gust):""} <span style="font-weight:500;color:var(--muted)">(${windTerm(w.ws).toLowerCase()})</span></dd><dt>Luft</dt><dd>${f1(w.t)} °C</dd><dt>Nederbörd</dt><dd>${f1(w.pr)} mm/h</dd>`;
   if(wt!=null)h+=`<dt>Vattentemp</dt><dd>${f0(wt)} °C</dd>`;
   const wet=la!=null?la>=0:onWater(ll);
+  if(lastSW&&wet){const R2=lastSW.R,p=CRS.latLngToPoint(ll,R2.z),xx=Math.floor(p.x-R2.px0),yy=Math.floor(p.y-R2.py0);
+    if(xx>=0&&yy>=0&&xx<R2.W&&yy<R2.H){const i=yy*R2.W+xx;if(lastSW.H[i]>=0)h+=`<dt>Vågor (SWAN)</dt><dd>ca ${f1(lastSW.H[i])} m, period ${f1(lastSW.T[i])} s, från ${dirName(lastSW.D[i])}</dd>`}}
   if(S.depth&&wet){const d=depthAt(ll.lat,ll.lng);if(d!=null)h+=`<dt>Djup</dt><dd>ca ${f0(d)} m <span style="font-weight:500;color:var(--muted)">(${depthMeasured(ll.lat,ll.lng)?"nära lodning":"uppskattat"})</span></dd>`}
   if(S.find.on&&la!=null&&la>=0&&lu!=null&&wt!=null){let k=0;const hs=wave(lu,la);while(hs>=LA_CLASSES[k][0])k++;const ok=k<=S.find.maxK&&wt>=S.find.tmin&&wt<=S.find.tmax;h+=`<dt>Villkoren</dt><dd>${ok?"uppfylls":"uppfylls inte"}</dd>`}
   h+=`</dl>`;
@@ -505,6 +591,7 @@ $("loc").onclick=()=>{if(me){map.setView(me.getLatLng(),Math.max(map.getZoom(),1
 // ------------------------------------------------------------------ start
 (async()=>{
   try{S.names=await getJSON("mask/namn.json")}catch(_){}
+  try{const X=await getJSON("data/swan/index.json");if(X.done&&X.done.length)S.swan=X}catch(_){}
   try{const G=await getJSON("data/djup.json"),dec=s=>{const b=atob(s),a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a};
     G.D=dec(G.d);G.M=dec(G.m);delete G.d;delete G.m;S.depth=G}catch(_){$("depthchip")&&($("depthchip").hidden=true);$("depthfind")&&($("depthfind").hidden=true)}
   try{const pi=await getJSON("mask/privat/info.json");S.privOk=true;S.privM=pi.meter||25}catch(_){$("privchip")&&($("privchip").hidden=true)}
