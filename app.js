@@ -131,7 +131,7 @@ function depthMeasured(lat,lon){const G=S.depth;if(!G)return false;const y=Math.
 // interpoleras mellan dem. Används för vågmönstret när det finns för området.
 const swanFiles=new Map();
 function swanFile(name){if(swanFiles.has(name))return swanFiles.get(name);
-  const p=getJSON("data/swan/"+name+".json").then(r=>{const dec=s=>{const b=atob(s),a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a};
+  const p=getJSON("data/swan/"+(S.swan&&S.swan.dir?S.swan.dir+"/":"")+name+".json").then(r=>{const dec=s=>{const b=atob(s),a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a};
     return{hs:dec(r.hs),tm:dec(r.tm),di:dec(r.di)}}).catch(()=>null);swanFiles.set(name,p);return p}
 const swanName=(d,u)=>"d"+String(Math.round(d*10)).padStart(4,"0")+"_s"+String(u).padStart(2,"0");
 async function swanCase(wd,U){const X=S.swan;if(!X)return null;const done=new Set(X.done);
