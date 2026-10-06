@@ -29,10 +29,12 @@ import numpy as np
 
 from common import BOUNDS, CACHE, DATA, FULL_BOUNDS, MASK
 
-OUT = DATA / "swan"
+TOP = DATA / "swan"
+GRID = "g070"                                       # byts när rutnätet ändras, så att allt räknas om
+OUT = TOP / GRID                                    # nya resultat samlas här tills alla är klara
 DIRS = [round(i * 22.5, 1) for i in range(16)]      # 16 vindriktningar
 SPEEDS = [5, 10, 15]
-DX, DY = 0.0025, 0.00125                            # ca 140 x 140 m vid 59,5 grader
+DX, DY = 0.00125, 0.000625                          # ca 70 x 70 m vid 59,5 grader
 SRC_URLS = [
     "https://swanmodel.sourceforge.io/download/zip/swan4151.tar.gz",
     "https://downloads.sourceforge.net/project/swanmodel/swan/41.51/swan4151.tar.gz",
@@ -254,11 +256,25 @@ def run_case(exe, lons, lats, dep, d, u):
 
 
 def write_index(lons, lats):
+    """Skriver index för det nya rutnätet. Appen fortsätter använda det gamla tills alla
+    beräkningar för det nya är klara; då pekas appen om och de gamla filerna tas bort."""
     done = sorted(p.stem for p in OUT.glob("d*_s*.json"))
     idx = {"bounds": BOUNDS, "lon0": float(lons[0]), "lat0": float(lats[0]), "dlon": DX, "dlat": DY,
-           "nx": len(lons), "ny": len(lats), "dirs": DIRS, "speeds": SPEEDS, "done": done,
+           "nx": len(lons), "ny": len(lats), "dirs": DIRS, "speeds": SPEEDS, "done": done, "dir": GRID,
            "model": "SWAN 41.51, stationär, GEN3, brytning, bottenfriktion, triader, diffraktion"}
     (OUT / "index.json").write_text(json.dumps(idx, separators=(",", ":")))
+    try:
+        switched = json.loads((TOP / "index.json").read_text()).get("dir") == GRID
+    except Exception:  # noqa: BLE001
+        switched = False
+    if len(done) >= len(DIRS) * len(SPEEDS) and not switched:
+        (TOP / "index.json").write_text(json.dumps(idx, separators=(",", ":")))
+        for old in TOP.glob("d*_s*.json"):           # resultat från tidigare rutnät
+            old.unlink()
+        for d in TOP.iterdir():
+            if d.is_dir() and d.name != GRID:
+                shutil.rmtree(d, ignore_errors=True)
+        log(f"SWAN: appen använder nu rutnätet {GRID}")
     return len(done)
 
 
@@ -272,12 +288,16 @@ def build_swan(budget_s=25 * 60, workers=None):
         return
     OUT.mkdir(parents=True, exist_ok=True)
     total = len(DIRS) * len(SPEEDS)
-    if len(list(OUT.glob("d*_s*.json"))) >= total:
+    try:
+        current = json.loads((TOP / "index.json").read_text()).get("dir") == GRID
+    except Exception:  # noqa: BLE001
+        current = False
+    if current and len(list(OUT.glob("d*_s*.json"))) >= total:
         return
     exe = swan_exe()
     lons, lats, dep = make_grid()
     todo = [(d, u) for u in SPEEDS for d in DIRS if not (OUT / f"d{int(round(d * 10)):04d}_s{u:02d}.json").exists()]
-    log(f"SWAN: {total - len(todo)} av {total} beräkningar klara sedan tidigare")
+    log(f"SWAN ({GRID}, {DX} x {DY} grader): {total - len(todo)} av {total} beräkningar klara sedan tidigare")
     workers = workers or max(1, min(4, os.cpu_count() or 1))
     with ThreadPoolExecutor(workers) as pool:
         futs = []
