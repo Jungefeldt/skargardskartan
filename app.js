@@ -498,11 +498,19 @@ const arrowLayer=L.layerGroup().addTo(map);
 function drawArrows(ui,shared){arrowLayer.clearLayers();const boxes=shared?ui:(ui||[]).slice();if(!S.layers.arrows)return boxes;
   const add=(ll,wd,ws,gust,big)=>{const s=big?44:36,p=map.latLngToContainerPoint(ll),bx=[p.x-34,p.y-s/2,p.x+34,p.y+s/2+34];
     const sz=map.getSize();if(bx[0]<2||bx[1]<2||bx[2]>sz.x-2||bx[3]>sz.y-2)return;
-    if(boxes.some(o=>bx[0]<o[2]&&bx[2]>o[0]&&bx[1]<o[3]&&bx[3]>o[1]))return;arrowAt(ll,wd,ws,gust,big);boxes.push(bx)};
+    if(boxes.some(o=>bx[0]<o[2]&&bx[2]>o[0]&&bx[1]<o[3]&&bx[3]>o[1]))return false;arrowAt(ll,wd,ws,gust,big);boxes.push(bx);return true};
   if(S.src==="egen"){add(map.getCenter(),S.own.dir,S.own.sp,null,true);return boxes}
   const W=S.wind;if(!W)return boxes;const ki=k=>W.keys.indexOf(k),b=map.getBounds().pad(.05),z=map.getZoom(),every=z<=9?3:z<=10?2:1;
+  let placed=0;
   W.points.forEach((p,i)=>{const r=W.series[i][S.ti];if(!r||r[ki("ws")]==null)return;const row=Math.round((p[0]-W.points[0][0])/0.1),col=Math.round((p[1]-W.points[0][1])/0.15);
-    if(row%every||col%every)return;if(!b.contains(p))return;add(L.latLng(p[0],p[1]),r[ki("wd")],r[ki("ws")],r[ki("gust")])});
+    if(row%every||col%every)return;if(!b.contains(p))return;if(add(L.latLng(p[0],p[1]),r[ki("wd")],r[ki("ws")],r[ki("gust")]))placed++});
+  // inzoomat kan alla prognospunkter hamna utanför bilden: rita då en pil med vinden för platsen,
+  // på en ledig plats så nära mitten som möjligt (helst över vatten)
+  if(!placed){const sz=map.getSize(),cands=[];
+    for(let gy=1;gy<8;gy++)for(let gx=1;gx<8;gx++){const pt=L.point(sz.x*gx/8,sz.y*gy/8),ll=map.containerPointToLatLng(pt);
+      cands.push({ll,d:Math.hypot(pt.x-sz.x/2,pt.y-sz.y/2)+(onWater(ll)?0:1e4)})}
+    cands.sort((a,c)=>a.d-c.d);
+    for(const c of cands){const lw=windAt(c.ll.lat,c.ll.lng,S.ti);if(!lw||lw.ws==null)continue;if(add(c.ll,lw.wd,lw.ws,lw.gust))break}}
   return boxes}
 function arrowAt(ll,wd,ws,gust,big){const s=big?44:36,c=windCol(ws);
   const html=`<svg width="${s}" height="${s}" viewBox="-16 -16 32 32" style="transform:rotate(${wd+180}deg)"><path d="M0 -14 L9 4 L2.5 1.5 L2.5 13 L-2.5 13 L-2.5 1.5 L-9 4 Z" fill="${c}" stroke="#fff" stroke-width="2.4" stroke-linejoin="round" paint-order="stroke"/></svg><span style="border-color:${c}"><b>${f0(ws)}${gust!=null?" ("+f0(gust)+")":""}</b><em>${windTerm(ws).replace(" vind","").toLowerCase()}</em></span>`;
