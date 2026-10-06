@@ -6,7 +6,8 @@ const CRS = L.CRS.EPSG3857;
 let toastT; function toast(s){const t=$("toast");t.textContent=s;t.classList.add("show");clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove("show"),2400)}
 
 // ------------------------------------------------------------------ karta
-const map = L.map("map",{zoomControl:false,minZoom:8,maxZoom:17,center:[59.6,18.8],zoom:10});
+// startar inzoomad över Trälhavet (Lervik, Oranjeholmen och Stora Älgö), så att det går snabbt att se läget
+const map = L.map("map",{zoomControl:false,minZoom:8,maxZoom:17,center:[59.447,18.392],zoom:13});
 map.attributionControl.setPrefix(false);
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(map);
 // sjömärken ligger ovanpå alla färgade lager (men under namn och etiketter), så att de alltid syns
