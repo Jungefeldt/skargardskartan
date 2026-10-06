@@ -378,6 +378,11 @@ if __name__ == "__main__":
     except Exception as ex:  # noqa: BLE001
         print(f"Djupdata kunde inte hämtas ({ex}), försöker igen nästa körning")
     try:
+        import lm_coast
+        with_time_limit(18 * 60, lambda: lm_coast.build(15 * 60))
+    except Exception as ex:  # noqa: BLE001
+        print(f"Lantmäteriets kustlinje kunde inte tas fram ({ex}), försöker igen nästa körning")
+    try:
         import swan_run
         with_time_limit(28 * 60, lambda: swan_run.build_swan(25 * 60))
     except Exception as ex:  # noqa: BLE001

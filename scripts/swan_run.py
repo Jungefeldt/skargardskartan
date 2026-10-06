@@ -279,7 +279,16 @@ def write_index(lons, lats):
 
 
 def build_swan(budget_s=25 * 60, workers=None):
+    global GRID, OUT
     t_end = time.time() + budget_s
+    # med Lantmäteriets kustlinje i masken räknas SWAN om på den nya kustlinjen
+    try:
+        lm = json.loads((MASK / "info.json").read_text()).get("lm")
+    except Exception:  # noqa: BLE001
+        lm = None
+    if lm:
+        GRID = f"g070lm{lm}"
+        OUT = TOP / GRID
     if BOUNDS == FULL_BOUNDS:
         log("SWAN: körs bara i testområdet (hela skärgården blir för stor), hoppar över")
         return
