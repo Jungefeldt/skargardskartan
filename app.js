@@ -16,6 +16,7 @@ L.tileLayer("https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png",{pane:"seamar
 L.control.scale({imperial:false,position:"topleft"}).addTo(map);
 map.createPane("tint").style.zIndex=300; map.getPane("tint").style.pointerEvents="none"; map.getPane("tint").style.mixBlendMode="color";
 map.createPane("zones").style.zIndex=345; map.getPane("zones").style.pointerEvents="none";
+map.createPane("crests").style.zIndex=346; map.getPane("crests").style.pointerEvents="none";
 map.createPane("ov").style.zIndex=350; map.getPane("ov").style.pointerEvents="none";
 map.createPane("coast").style.zIndex=360; map.getPane("coast").style.pointerEvents="none";
 map.createPane("lbl").style.zIndex=640; map.getPane("lbl").style.pointerEvents="none";
@@ -31,7 +32,7 @@ function hideCanvas(pane){pane=pane||"ov";if(overlays[pane]){map.removeLayer(ove
 const LANDCOL={gul:[244,226,160],vit:[246,246,242]};
 
 // ------------------------------------------------------------------ data
-const S={wstyle:"farg",basis:"byar",land:"gul",wind:null,temp:null,T:null,layers:{la:true,temp:false,arrows:true,waves:true,priv:true,names:true,depth:false},privOk:false,find:{on:false,maxK:0,tmin:null,tmax:null,dmin:0,dmax:60},src:"prognos",own:{dir:225,sp:8},ti:0};
+const S={wstyle:"farg",basis:"byar",land:"gul",wind:null,temp:null,T:null,layers:{la:true,temp:false,arrows:true,waves:true,priv:true,names:true,depth:false,contours:true},privOk:false,find:{on:false,maxK:0,tmin:null,tmax:null,dmin:0,dmax:60},src:"prognos",own:{dir:225,sp:8},ti:0};
 async function getJSON(u){const r=await fetch(u,{cache:"no-cache"});if(!r.ok)throw new Error(u+" "+r.status);return r.json()}
 
 // ------------------------------------------------------------------ land/vatten-mask
@@ -228,7 +229,7 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     lastR=R;
     // kustlinje: skarp vektorlinje i skärmens upplösning, som på ett sjökort
     await drawCoast();if(my!==seq)return;
-    if(!haveLa&&!haveT&&!privOn&&!(S.depth&&Lyr.depth)){hideCanvas();hideCanvas("zones");laR=null;laT=null;drawArrows(placeNames(),true);legend();if(sel)sheet();return}
+    if(!haveLa&&!haveT&&!privOn&&!(S.depth&&Lyr.depth)){hideCanvas();hideCanvas("zones");hideCanvas("crests");crestSet=null;laR=null;laT=null;drawArrows(placeNames(),true);legend();if(sel)sheet();return}
     // lä
     // riktningen avrundas till 5 grader; samma vy och riktning återanvänder beräkningen (snabb uppspelning)
     let F=null;if(haveLa){const dr=Math.round(w.wd/5)*5,key=[mz,R.px0,R.py0,R.W,R.H,dr].join("|");
@@ -257,7 +258,7 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
       if(S.find.tmin==null){S.find.tmin=Math.floor(lo);S.find.tmax=Math.ceil(hi);syncFind()}}
     laT=TV;
     // djup per vattenpunkt (för djupskiktet och djupfiltret i Hitta plats)
-    const patMode=S.wstyle==="monster"&&haveLa&&Lyr.la&&!F_.on;
+    const patMode=(S.wstyle==="monster"||S.wstyle==="rorlig")&&haveLa&&Lyr.la&&!F_.on;
     const useDF=F_.on&&S.depth&&(F_.dmin>0||F_.dmax<60),needD=S.depth&&(Lyr.depth||useDF);let DV=null,DB=null;
     if(needD){const G=S.depth,Dg=G.D,GW=G.nx,rowF=new Float32Array(R.H),colF=new Float32Array(R.W);DV=new Float32Array(N);DB=new Int16Array(N).fill(-999);
       for(let y=0;y<R.H;y++){const lat=CRS.pointToLatLng(L.point(R.px0,R.py0+y+.5),mz).lat;rowF[y]=Math.max(0,Math.min(G.ny-1.001,(lat-G.lat0)/G.dlat))}
@@ -366,11 +367,11 @@ function crestOpacity(w){const G=CREST_GRADE;if(w<=G[0][1])return G[0][2]*Math.m
 // Ritar linjer vars tjocklek följer våghöjden längs linjen. Våghöjden jämnas ut längs linjen och
 // tjockleken delas i fina steg, så att övergångarna blir mjuka utan synliga skarvar. Där en linje
 // tar slut smalnar den av och tonas ut, i stället för att sluta tvärt.
-function strokeGraded(x,lines,dpr,hAt,toC,isEdge){const STEP=.1,TAPER=80*dpr,THIN=.35,buckets=new Map();
+function strokeGraded(x,lines,dpr,hAt,toC,isEdge,vAt){const STEP=.1,TAPER=80*dpr,THIN=.35,buckets=new Map();
   for(const Lp of lines){const n=Lp.length;if(n<2)continue;const H=new Float32Array(n);for(let i=0;i<n;i++)H[i]=hAt(Lp[i]);
     // dela upp i sammanhängande bitar (där det inte är lä) och mät avståndet längs varje bit
     let a=0;while(a<n){while(a<n&&H[a]<0.1)a++;if(a>=n)break;let b=a;while(b+1<n&&H[b+1]>=0.1)b++;
-      const C=[];for(let i=a;i<=b;i++)C.push(toC(Lp[i]));const D=new Float32Array(C.length);
+      const C=[];for(let i=a;i<=b;i++){const c=toC(Lp[i]),v=vAt?vAt(Lp[i]):[0,0];C.push([c[0],c[1],v[0],v[1]])}const D=new Float32Array(C.length);
       for(let i=1;i<C.length;i++)D[i]=D[i-1]+Math.hypot(C[i][0]-C[i-1][0],C[i][1]-C[i-1][1]);const len=D[C.length-1];
       // ändar som bara går ut över kartbildens kant tonas inte ut
       const edge=p=>isEdge&&isEdge(p),t0=!(edge(Lp[a])||(a>0&&edge(Lp[a-1]))),t1=!(edge(Lp[b])||(b<n-1&&edge(Lp[b+1])));
@@ -385,9 +386,22 @@ function strokeGraded(x,lines,dpr,hAt,toC,isEdge){const STEP=.1,TAPER=80*dpr,THI
         if(oq<1){run=null;lev=-1;continue}
         if(key!==lev||!run){if(run)run.push(C[q]);run=[];lev=key;let bk=buckets.get(key);if(!bk)buckets.set(key,bk=[]);bk.push(run)}run.push(C[q])}
       a=b+1}}
-  x.lineCap="round";x.lineJoin="round";
-  for(const [key,runs] of buckets){const w=Math.floor(key/100)*STEP,o=(key%100)/20;x.lineWidth=w*dpr;x.strokeStyle=`rgba(15,20,25,${o.toFixed(3)})`;x.beginPath();
-    for(const r of runs){if(r.length<2)continue;x.moveTo(r[0][0],r[0][1]);for(let i=1;i<r.length;i++)x.lineTo(r[i][0],r[i][1])}x.stroke()}}
+  // linjerna sparas som tjocklek, färg och punkter [x, y, förflyttning x, förflyttning y]
+  const out=[];for(const [key,runs] of buckets){const w=Math.floor(key/100)*STEP,o=(key%100)/20;
+    out.push({w:w*dpr,c:`rgba(15,20,25,${o.toFixed(3)})`,runs:runs.filter(r=>r.length>=2).map(r=>Float32Array.from(r.flat()))})}
+  return out}
+// Ritar vågkammarna, förflyttade en andel (frac) av avståndet till nästa kam i gångriktningen.
+// Animeras frac från 0 till 1 vandrar varje kam fram till där nästa låg, så rörelsen loopar sömlöst.
+let crestSet=null,animOn=false,animT0=0,animRAF=0;
+const WAVE_PERIOD_MS=2600;      // en vågperiod i animationen
+function drawCrestSet(frac){const A=crestSet;if(!A)return;const x=A.x;x.clearRect(0,0,A.cw,A.ch);x.lineCap="round";x.lineJoin="round";
+  for(const b of A.buckets){x.lineWidth=b.w;x.strokeStyle=b.c;x.beginPath();
+    for(const r of b.runs){x.moveTo(r[0]+frac*r[2],r[1]+frac*r[3]);for(let i=4;i<r.length;i+=4)x.lineTo(r[i]+frac*r[i+2],r[i+1]+frac*r[i+3])}x.stroke()}
+  A.clip(x)}
+function animLoop(ts){if(!animOn||!crestSet){animRAF=0;return}drawCrestSet(((ts-animT0)%WAVE_PERIOD_MS)/WAVE_PERIOD_MS);animRAF=requestAnimationFrame(animLoop)}
+function startAnim(){animOn=S.wstyle==="rorlig";if(!animOn&&animRAF){cancelAnimationFrame(animRAF);animRAF=0}
+  if(animOn&&crestSet&&!animRAF){animT0=performance.now();animRAF=requestAnimationFrame(animLoop)}}
+document.addEventListener("visibilitychange",()=>{if(document.hidden){cancelAnimationFrame(animRAF);animRAF=0}else startAnim()});
 // Vågkammar som följer SWAN:s vågriktning: jämnt fördelade linjer som hela tiden ligger tvärs
 // mot vågornas gång. Där vågorna böjer sig (mot grunt vatten, runt uddar och in i lä) böjer sig
 // linjerna med. Avståndet mellan linjerna och deras tjocklek följer våghöjden.
@@ -428,10 +442,14 @@ function drawSwanCrests(x,Z,R,cx0,cy0,W0,H0,k,h,dpr,mz,A,lvl){const sc=Math.pow(
     for(let q=0;q<pts.length;q+=6){const p=pts[q],i=at(p[0],p[1]);if(i<0)continue;const d=sep(i),nx3=-cyv[i],ny3=cxv[i];
       queue.push([p[0]+nx3*d,p[1]+ny3*d],[p[0]-nx3*d,p[1]-ny3*d])}}
   // rita linjerna med tjocklek som följer våghöjden steglöst
-  strokeGraded(x,lines,dpr,p=>{const i=at(p[0],p[1]);return i<0?-1:Hc[i]},p=>[p[0]*k,p[1]*k],p=>p[0]<2||p[1]<2||p[0]>W0-2||p[1]>H0-2)}
+  // gångriktningen (dit vågorna går) per punkt, för animationen
+  const tvx=new Float32Array(n),tvy=new Float32Array(n);
+  for(let y=0;y<H0;y++){const s=(cy0+y)*R.W+cx0;for(let xx=0;xx<W0;xx++){const i=y*W0+xx,j=s+xx;if(SW.H[j]<0)continue;const b=(SW.D[j]+180)*Math.PI/180;tvx[i]=Math.sin(b);tvy[i]=-Math.cos(b)}}
+  return strokeGraded(x,lines,dpr,p=>{const i=at(p[0],p[1]);return i<0?-1:Hc[i]},p=>[p[0]*k,p[1]*k],p=>p[0]<2||p[1]<2||p[0]>W0-2||p[1]>H0-2,
+    p=>{const i=at(p[0],p[1]);if(i<0)return[0,0];const d=sep(i)*k;return[tvx[i]*d,tvy[i]*d]})}
 // Zonerna i vattnet som mjuka ytor med tunna konturlinjer: lä och sjögång, temperatur, Hitta plats och hemfridszoner
 function drawZones(R,vx0,vy0,vx1,vy1,mz,Z){const mg=4,cx0=Math.max(0,vx0-R.px0-mg),cy0=Math.max(0,vy0-R.py0-mg),cx1=Math.min(R.W,vx1-R.px0+mg),cy1=Math.min(R.H,vy1-R.py0+mg),W0=cx1-cx0,H0=cy1-cy0;
-  if(W0<4||H0<4){hideCanvas("zones");return}
+  if(W0<4||H0<4){hideCanvas("zones");hideCanvas("crests");crestSet=null;return}
   const dpr=window.devicePixelRatio||1;let k=Math.pow(2,map.getZoom()-mz)*dpr;k=Math.min(k,4096/W0,4096/H0);const h=k/2;
   const x=overlayCanvas("zones",mz,R.px0+cx0,R.py0+cy0,W0,H0,k),n=W0*H0;
   const crop=A=>{const o=new Int16Array(n);for(let y=0;y<H0;y++){const s=(cy0+y)*R.W+cx0;for(let xx=0;xx<W0;xx++)o[y*W0+xx]=A[s+xx]}return o};
@@ -452,7 +470,8 @@ function drawZones(R,vx0,vy0,vx1,vy1,mz,Z){const mg=4,cx0=Math.max(0,vx0-R.px0-m
   // Sjögång som vågkammar ovanpå djupet: linjerna ligger tvärs mot vinden, buktar ut i vindens
   // riktning där sjön är utvecklad och släpar efter i lä bakom öar och stränder. Avståndet mellan
   // linjerna växer med våghöjden. Linjerna är nivåkurvor för en "fas" som räknas per punkt.
-  if(Z.KPAT&&Z.SW){drawSwanCrests(x,Z,R,cx0,cy0,W0,H0,k,h,dpr,mz,dil(crop(Z.KPAT)),lvl);}
+  let crestB=null;
+  if(Z.KPAT&&Z.SW){crestB=drawSwanCrests(x,Z,R,cx0,cy0,W0,H0,k,h,dpr,mz,dil(crop(Z.KPAT)),lvl);}
   else if(Z.KPAT&&Z.FV&&Z.UV){const A=dil(crop(Z.KPAT)),PX=v=>(v-2)*h,sc=Math.pow(2,map.getZoom()-mz),mz_m=Z.mpz;
     const th=(Z.wdir+180)*Math.PI/180,dx=Math.sin(th),dy=-Math.cos(th),gx0=R.px0+cx0,gy0=R.py0+cy0;
     // fetch och vind för utsnittet (land får grannens värden, så att linjerna fortsätter jämnt in mot stranden)
@@ -485,9 +504,10 @@ function drawZones(R,vx0,vy0,vx1,vy1,mz,Z){const mg=4,cx0=Math.max(0,vx0-R.px0-m
     const M=new Uint8Array(n);for(let i=0;i<n;i++)M[i]=Math.floor(P[i]-bow[i]*inv[i])&1;
     const crest=traceLoops(M,W0,H0,3),WW=crest.W,HH=crest.H;
     // linjerna med steglös tjocklek; lä (under 0,1 m) och ramen ritas inte
-    strokeGraded(x,crest,dpr,q=>{if(q[0]<2.6||q[1]<2.6||q[0]>2*WW-2.6||q[1]>2*HH-2.6)return -1;
+    crestB=strokeGraded(x,crest,dpr,q=>{if(q[0]<2.6||q[1]<2.6||q[0]>2*WW-2.6||q[1]>2*HH-2.6)return -1;
         const xx=Math.floor((q[0]-2)/2),yy=Math.floor((q[1]-2)/2);if(xx<0||yy<0||xx>=W0||yy>=H0)return -1;const i=yy*W0+xx;return A[i]>=1?HV[i]:-1},
-      q=>[PX(q[0]),PX(q[1])],q=>q[0]<6||q[1]<6||q[0]>2*WW-6||q[1]>2*HH-6)}
+      q=>[PX(q[0]),PX(q[1])],q=>q[0]<6||q[1]<6||q[0]>2*WW-6||q[1]>2*HH-6,
+      q=>{const xx=Math.min(W0-1,Math.max(0,Math.floor((q[0]-2)/2))),yy=Math.min(H0-1,Math.max(0,Math.floor((q[1]-2)/2))),d=k/(inv[yy*W0+xx]*mz_m);return[dx*d,dy*d]})}
   // temperaturgränser som tunna linjer, som djupkurvor
   if(tb){let lo=1e9,hi=-1e9;for(let i=0;i<n;i++){if(tb[i]===-999)continue;if(tb[i]<lo)lo=tb[i];if(tb[i]>hi)hi=tb[i]}
     for(let b2=lo+1;b2<=hi;b2++)strokeLoops(x,traceLoops(lvl(tb,b2),W0,H0),h,"#0B3550",1.3*dpr)}
@@ -497,10 +517,14 @@ function drawZones(R,vx0,vy0,vx1,vy1,mz,Z){const mg=4,cx0=Math.max(0,vx0-R.px0-m
   if(Z.priv){const P=crop(Z.priv),WAc=crop(R.water),M=new Uint8Array(n);for(let i=0;i<n;i++)M[i]=P[i]&&WAc[i]?1:0;
     const loops=traceLoops(M,W0,H0);fillLoops(x,loops,h,"rgba(70,56,50,.72)");strokeLoops(x,loops,h,"#281E1C",1.4*dpr)}
   // klipp bort allt som hamnat innanför kustlinjen, så att zonerna slutar exakt vid stranden
-  const C=lastCoast;if(C){const f=Math.pow(2,mz-C.cz),ox=R.px0+cx0,oy=R.py0+cy0,TX=v=>((C.x0+(v-2)/2)*f-ox)*k,TY=v=>((C.y0+(v-2)/2)*f-oy)*k;
-    x.save();x.globalCompositeOperation="destination-out";x.fillStyle="#000";x.beginPath();
-    for(const p of C.loops){x.moveTo(TX(p[0][0]),TY(p[0][1]));for(let i=1;i<p.length;i++)x.lineTo(TX(p[i][0]),TY(p[i][1]));x.closePath()}
-    x.fill("evenodd");x.restore()}}
+  const C=lastCoast;let clip=()=>{};
+  if(C){const f=Math.pow(2,mz-C.cz),ox=R.px0+cx0,oy=R.py0+cy0,TX=v=>((C.x0+(v-2)/2)*f-ox)*k,TY=v=>((C.y0+(v-2)/2)*f-oy)*k;
+    const path=new Path2D();for(const p of C.loops){path.moveTo(TX(p[0][0]),TY(p[0][1]));for(let i=1;i<p.length;i++)path.lineTo(TX(p[i][0]),TY(p[i][1]));path.closePath()}
+    clip=xx=>{xx.save();xx.globalCompositeOperation="destination-out";xx.fillStyle="#000";xx.fill(path,"evenodd");xx.restore()};clip(x)}
+  // vågkammarna i ett eget lager, så att de kan ritas om (animeras) utan att resten räknas om
+  if(crestB){const x2=overlayCanvas("crests",mz,R.px0+cx0,R.py0+cy0,W0,H0,k);crestSet={x:x2,cw:x2.canvas.width,ch:x2.canvas.height,buckets:crestB,clip};
+    drawCrestSet(0);startAnim()}
+  else{crestSet=null;hideCanvas("crests")}}
 let MASK_MAX=13,lastCoast=null;
 async function drawCoast(){const zz=map.getZoom(),cz=Math.min(MASK_MAX,Math.max(11,zz)),bnd=map.getBounds().pad(.04),
   nw=CRS.latLngToPoint(bnd.getNorthWest(),cz),se=CRS.latLngToPoint(bnd.getSouthEast(),cz),x0=Math.floor(nw.x),y0=Math.floor(nw.y),W0=Math.ceil(se.x)-x0,H0=Math.ceil(se.y)-y0;
@@ -511,7 +535,28 @@ async function drawCoast(){const zz=map.getZoom(),cz=Math.min(MASK_MAX,Math.max(
   const loops=traceLoops(LAND,W0,H0,zz-cz>=1?2:1);lastCoast={loops,cz,x0,y0};
   // landyta innanför konturen, i sjökortsfärg (inte när vanlig karta är vald)
   if(S.land!=="karta"){const lc=LANDCOL[S.land];fillLoops(x,loops,h,`rgba(${lc[0]},${lc[1]},${lc[2]},.94)`)}
+  if(S.terr&&S.layers.contours)drawContours(x,cz,x0,y0,k,zz);
   strokeLoops(x,loops,h,"#15191D",1.5*dpr)}
+// Höjdkurvor på land ur Lantmäteriets höjdmodell (data/terrang.json, ca 20 m mellan punkterna).
+// Tätare kurvor ju mer man zoomar in; var femte kurva är lite kraftigare.
+let contourCache={key:null,lev:null};
+function drawContours(x,cz,x0,y0,k,zz){const T=S.terr;if(zz<12)return;const step=zz>=14?5:10,bold=zz>=14?25:50;
+  const b=map.getBounds().pad(.05);
+  const c0=Math.max(0,Math.floor((b.getWest()-T.lon0)/T.dlon)),c1=Math.min(T.nx,Math.ceil((b.getEast()-T.lon0)/T.dlon));
+  const r0=Math.max(0,Math.floor((T.lat0-b.getNorth())/T.dlat)),r1=Math.min(T.ny,Math.ceil((T.lat0-b.getSouth())/T.dlat));
+  const W=c1-c0,H=r1-r0;if(W<3||H<3)return;
+  const key=[c0,r0,W,H,step].join("|");let lev=contourCache.key===key?contourCache.lev:null;
+  if(!lev){const sub=new Uint8Array(W*H);let hi=0;for(let r=0;r<H;r++){const o=(r0+r)*T.nx+c0;for(let c=0;c<W;c++){const v=T.H[o+c];sub[r*W+c]=v;if(v>hi)hi=v}}
+    lev=[];for(let L=step;L<=hi;L+=step){const M=new Uint8Array(W*H);for(let i=0;i<M.length;i++)M[i]=sub[i]>=L?1:0;lev.push([L,traceLoops(M,W,H,2)])}
+    contourCache={key,lev}}
+  const N=256*Math.pow(2,cz),RAD=Math.PI/180;
+  const TX=v=>(((T.lon0+(c0+(v-2)/2)*T.dlon)+180)/360*N-x0)*k;
+  const TY=v=>{const s=Math.sin((T.lat0-(r0+(v-2)/2)*T.dlat)*RAD);return((.5-Math.log((1+s)/(1-s))/(4*Math.PI))*N-y0)*k};
+  const dpr=window.devicePixelRatio||1;x.lineJoin="round";x.lineCap="round";
+  for(const [L,loops] of lev){const strong=L%bold===0;x.lineWidth=(strong?1.1:.6)*dpr;x.strokeStyle=strong?"rgba(120,82,40,.75)":"rgba(140,100,55,.5)";x.beginPath();
+    const Wl=loops.W,Hl=loops.H,edge=q=>q[0]<2.6||q[1]<2.6||q[0]>2*Wl-2.6||q[1]>2*Hl-2.6;
+    for(const p of loops){let pen=false;for(const q of p){if(edge(q)){pen=false;continue}const X=TX(q[0]),Y=TY(q[1]);if(pen)x.lineTo(X,Y);else{x.moveTo(X,Y);pen=true}}}
+    x.stroke()}}
 // Ytor som täcks av tidsraden, knapparna och panelen, så att inga etiketter hamnar under dem.
 function uiBoxes(){const m=$("map").getBoundingClientRect(),out=[];
   document.querySelectorAll(".bar,.side,.panel:not(.hidden),.sheet.open,.leaflet-control-scale,.leaflet-control-attribution").forEach(el=>{const r=el.getBoundingClientRect();if(r.width&&r.height)out.push([r.left-m.left,r.top-m.top,r.right-m.left,r.bottom-m.top])});return out}
@@ -551,7 +596,7 @@ function arrowAt(ll,wd,ws,gust,big){const s=big?44:36,c=windCol(ws);
 // ------------------------------------------------------------------ förklaring
 function legend(){const L_=$("legend"),w=laWind||domainWind(S.ti);let h="";
   if(S.find.on)h+=`<span><i style="background:rgba(214,24,138,.67)"></i>Uppfyller villkoren</span><span><i style="background:rgba(70,80,88,.37)"></i>Övrigt vatten</span>`;
-  else if(S.layers.la&&S.wstyle==="monster")h+=LA_CLASSES.map((c,k)=>`<span>${wavePatternSVG(k)}${c[1]}</span>`).join("");
+  else if(S.layers.la&&(S.wstyle==="monster"||S.wstyle==="rorlig"))h+=LA_CLASSES.map((c,k)=>`<span>${wavePatternSVG(k)}${c[1]}</span>`).join("");
   else if(S.layers.la)h+=LA_CLASSES.map(c=>`<span><i style="background:${c[2]}"></i>${c[1]}</span>`).join("");
   else if(S.layers.temp&&tRange)h+=`<div class="grad" style="background:linear-gradient(90deg,${TSTOPS.map(s=>s[1]+" "+(s[0]/24*100)+"%").join(",")})"></div><div class="gl"><span>0</span><span>6</span><span>12</span><span>18</span><span>24 °C</span></div>`;
   if((S.layers.la||S.find.on)&&w)h=`<span><b>${dirName(w.wd)} ${f0(w.ws)} m/s${w.gust!=null?", byar "+f0(w.gust):""}</b>${S.src==="prognos"?" (medel för området) · räknat på "+(S.basis==="byar"&&w.gust!=null?"byar":"medelvind"):""}</span>`+h;
@@ -591,7 +636,7 @@ $("tmax").oninput=e=>{S.find.tmax=Math.max(+e.target.value,S.find.tmin);syncFind
 document.querySelectorAll("[data-land]").forEach(b=>b.onclick=()=>{S.land=b.dataset.land;document.querySelectorAll("[data-land]").forEach(x=>x.setAttribute("aria-checked",x===b));try{localStorage.setItem("land",S.land)}catch(_){}schedule()});
 try{const sv=localStorage.getItem("land");if(sv&&LANDCOL[sv]!==undefined||sv==="karta"){S.land=sv;document.querySelectorAll("[data-land]").forEach(x=>x.setAttribute("aria-checked",x.dataset.land===sv))}}catch(_){}
 document.querySelectorAll("[data-wstyle]").forEach(b=>b.onclick=()=>{S.wstyle=b.dataset.wstyle;document.querySelectorAll("[data-wstyle]").forEach(x=>x.setAttribute("aria-checked",x===b));try{localStorage.setItem("wstyle",S.wstyle)}catch(_){}schedule()});
-try{const sw=localStorage.getItem("wstyle");if(sw==="farg"||sw==="monster"){S.wstyle=sw;document.querySelectorAll("[data-wstyle]").forEach(x=>x.setAttribute("aria-checked",x.dataset.wstyle===sw))}}catch(_){}
+try{const sw=localStorage.getItem("wstyle");if(sw==="farg"||sw==="monster"||sw==="rorlig"){S.wstyle=sw;document.querySelectorAll("[data-wstyle]").forEach(x=>x.setAttribute("aria-checked",x.dataset.wstyle===sw))}}catch(_){}
 document.querySelectorAll("[data-basis]").forEach(b=>b.onclick=()=>{S.basis=b.dataset.basis;document.querySelectorAll("[data-basis]").forEach(x=>x.setAttribute("aria-checked",x===b));try{localStorage.setItem("basis",S.basis)}catch(_){}schedule()});
 try{const sb=localStorage.getItem("basis");if(sb==="medel"||sb==="byar"){S.basis=sb;document.querySelectorAll("[data-basis]").forEach(x=>x.setAttribute("aria-checked",x.dataset.basis===sb))}}catch(_){}
 $("explain").onclick=()=>{let h=`<h3>Färger för lä och sjögång</h3><p class="note" style="margin-top:2px;padding-right:44px">Klassen bestäms av uppskattad våghöjd (signifikant våghöjd, ungefär medelhöjden av den högsta tredjedelen av vågorna). Den räknas från vindstyrkan och hur mycket öppet vatten det finns mot vinden, högst 6 km.</p>
@@ -600,6 +645,7 @@ $("explain").onclick=()=>{let h=`<h3>Färger för lä och sjögång</h3><p class
     <h3>Vindstyrka (SMHI)</h3><table class="deftab"><tr><th>Benämning</th><th>m/s</th></tr><tr><td>Lugnt</td><td>0–0,2</td></tr><tr><td>Svag vind</td><td>0,3–3</td></tr><tr><td>Måttlig vind</td><td>4–7</td></tr><tr><td>Frisk vind</td><td>8–13</td></tr><tr><td>Hård vind</td><td>14–19</td></tr><tr><td>Mycket hård vind</td><td>20–24</td></tr><tr><td>Storm</td><td>25–32</td></tr></table>
     <h3>Vågmönster</h3><p class="note" style="margin-top:2px">Varje linje är en vågkam och ligger tvärs mot vågornas gång. Där det finns beräkningar från vågmodellen SWAN (TU Delft) följer linjerna modellens vågriktning, som tar hänsyn till lä bakom öar, refraktion mot grunt vatten och diffraktion runt uddar. Tätare och tunnare linjer betyder mindre vågor, glesare och kraftigare linjer större vågor.</p>
     <h3>Lä för vinden</h3><p class="note" style="margin-top:2px">Bakom öar, uddar och skog är vinden svagare. Dämpningen räknas från markhöjden i Lantmäteriets höjdmodell och skogen i OpenStreetMap (räknad som 15 m hög): störst närmast hindret, och vinden är nästan tillbaka efter 20 till 30 gånger hindrets höjd. Uppskruvad vind runt uddar och i smala sund ingår inte.</p>
+    <h3>Höjdkurvor</h3><p class="note" style="margin-top:2px">Höjdkurvorna på land kommer från Lantmäteriets laserskannade höjdmodell. Avståndet mellan kurvorna är 10 m, och 5 m när man zoomat in; var femte kurva är kraftigare.</p>
     <h3>Djup</h3><p class="note" style="margin-top:2px">Djupzonerna kommer från EMODnet Bathymetry (DTM 2024). I svenska vatten är underlaget medvetet glesat av sekretesskäl, så djupen är ungefärliga: bra för att skilja grunda vikar från djupa fjärdar, men enskilda grund, kanter och smala sund syns inte. "Nära lodning" betyder att det finns en verklig mätning i närheten, "uppskattat" att djupet är uträknat från omgivningen.</p>
     <p class="note">Uppskattningen tar inte hänsyn till dyning, strömmar eller båttrafik, och vågor böjer runt små öar. Använd den som stöd, inte för navigering.</p>`;
   $("sheetc").innerHTML=h;$("sheet").classList.add("open")};
@@ -658,6 +704,9 @@ $("loc").onclick=()=>{if(me){map.setView(me.getLatLng(),Math.max(map.getZoom(),1
   try{S.names=await getJSON("mask/namn.json")}catch(_){}
   try{const X=await getJSON("data/swan/index.json");if(X.done&&X.done.length)S.swan=X}catch(_){}
   try{const V=await getJSON("data/vind/index.json");if(V.done&&V.done.length===V.dirs.length)S.vind=V}catch(_){}
+  // höjdmodellen för höjdkurvorna laddas i bakgrunden
+  getJSON("data/terrang.json").then(T=>{const b=atob(T.h),a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);T.H=a;delete T.h;S.terr=T;schedule()})
+    .catch(()=>{$("contourchip")&&($("contourchip").hidden=true)});
   try{const G=await getJSON("data/djup.json"),dec=s=>{const b=atob(s),a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a};
     G.D=dec(G.d);G.M=dec(G.m);delete G.d;delete G.m;S.depth=G}catch(_){$("depthchip")&&($("depthchip").hidden=true);$("depthfind")&&($("depthfind").hidden=true)}
   try{const pi=await getJSON("mask/privat/info.json");S.privOk=true;S.privM=pi.meter||25}catch(_){$("privchip")&&($("privchip").hidden=true)}
