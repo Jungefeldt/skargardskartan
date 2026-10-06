@@ -315,7 +315,7 @@ const FIND_SOLID=[mixc([70,80,88],.37),mixc([214,24,138],.67)];
 // Vågmönster för sjögången: tunna svarta vågstreck, längre och högre ju grövre sjö (lä får inget mönster)
 const WAVE_PAT=[null,{l:8,a:.8,s:9,w:.6,o:.42},{l:14,a:2.1,s:12,w:.8,o:.58},{l:21,a:3.4,s:15,w:1.05,o:.72},{l:28,a:4.8,s:18,w:1.35,o:.85}];
 // Vågkammarnas tjocklek och styrka per klass: tunna och ljusa vid krusning, kraftiga och mörka vid hård sjö
-const CREST_W=[0,.55,1.1,1.9,2.8],CREST_O=[0,.45,.62,.8,.92];
+const CREST_W=[0,.6,1.3,2.2,3.0],CREST_O=[0,.45,.65,.84,.94];   // för förklaringen (mitt i varje klass)
 // Vågprofilen är en trokoid: spetsiga toppar åt det håll vinden blåser, rundade dalar bakom
 const WAVE_Q=.62;
 function waveLine(g,tw,yc,A,steps){for(let s=0;s<=steps;s++){const t=2*Math.PI*s/steps,X=tw*(t-WAVE_Q*Math.sin(t))/(2*Math.PI),Y=yc-A*Math.cos(t);if(s)g.lineTo(X,Y);else g.moveTo(X,Y)}}
@@ -327,6 +327,22 @@ function wavePattern(ctx,k,dpr,ox,oy,ang){const P=WAVE_PAT[k];if(!P)return null;
 function wavePatternSVG(k){const P=WAVE_PAT[k];if(!P)return'<i style="background:#fff"></i>';const w=28,h=12,gap=[0,5,8,12,16][k],bow=[0,1,2,3,4][k];let d="";
   for(let x0=2;x0<w;x0+=gap)d+=` M${x0} 0 Q${x0+bow*2} ${h/2} ${x0} ${h}`;
   return`<svg width="${w}" height="${h}" style="vertical-align:-2px;border:1px solid rgba(0,0,0,.2);border-radius:3px;background:#D6E9F5"><path d="${d}" fill="none" stroke="#11171c" stroke-opacity="${CREST_O[k]}" stroke-width="${CREST_W[k]}"/></svg>`}
+// Steglös tjocklek och mörkhet på vågkammarna efter våghöjden (interpolerat mellan klassernas värden)
+const CREST_GRADE=[[0.1,.5,.42],[0.25,1.0,.6],[0.5,1.8,.78],[1.0,2.8,.92],[1.6,3.3,.96]];
+function crestWidth(H){const G=CREST_GRADE;if(H<=G[0][0])return G[0][1];for(let i=1;i<G.length;i++)if(H<=G[i][0]){const a=G[i-1],b=G[i];return a[1]+(b[1]-a[1])*(H-a[0])/(b[0]-a[0])}return G[G.length-1][1]}
+function crestOpacity(w){const G=CREST_GRADE;if(w<=G[0][1])return G[0][2];for(let i=1;i<G.length;i++)if(w<=G[i][1]){const a=G[i-1],b=G[i];return a[2]+(b[2]-a[2])*(w-a[1])/(b[1]-a[1])}return G[G.length-1][2]}
+// Ritar linjer vars tjocklek följer våghöjden längs linjen. Våghöjden jämnas ut längs linjen och
+// tjockleken delas i fina steg, så att övergångarna blir mjuka utan synliga skarvar.
+function strokeGraded(x,lines,dpr,hAt,toC){const STEP=.1,buckets=new Map();
+  for(const Lp of lines){const n=Lp.length;if(n<2)continue;const H=new Float32Array(n);for(let i=0;i<n;i++)H[i]=hAt(Lp[i]);
+    let run=null,lev=-1;
+    for(let i=0;i<n;i++){if(H[i]<0.1){run=null;lev=-1;continue}
+      let s=0,c=0;for(let j=Math.max(0,i-6);j<=Math.min(n-1,i+6);j++)if(H[j]>=0.1){s+=H[j];c++}
+      const l=Math.round(crestWidth(s/c)/STEP);
+      if(l!==lev||!run){if(run)run.push(Lp[i]);run=[];lev=l;let b=buckets.get(l);if(!b)buckets.set(l,b=[]);b.push(run)}run.push(Lp[i])}}
+  x.lineCap="round";x.lineJoin="round";
+  for(const [l,runs] of buckets){const w=l*STEP;x.lineWidth=w*dpr;x.strokeStyle=`rgba(15,20,25,${crestOpacity(w).toFixed(3)})`;x.beginPath();
+    for(const r of runs){if(r.length<2)continue;let p=toC(r[0]);x.moveTo(p[0],p[1]);for(let i=1;i<r.length;i++){p=toC(r[i]);x.lineTo(p[0],p[1])}}x.stroke()}}
 // Vågkammar som följer SWAN:s vågriktning: jämnt fördelade linjer som hela tiden ligger tvärs
 // mot vågornas gång. Där vågorna böjer sig (mot grunt vatten, runt uddar och in i lä) böjer sig
 // linjerna med. Avståndet mellan linjerna och deras tjocklek följer våghöjden.
@@ -366,12 +382,8 @@ function drawSwanCrests(x,Z,R,cx0,cy0,W0,H0,k,h,dpr,mz,A,lvl){const sc=Math.pow(
     for(const p of pts)add(p[0],p[1]);lines.push(pts);
     for(let q=0;q<pts.length;q+=6){const p=pts[q],i=at(p[0],p[1]);if(i<0)continue;const d=sep(i),nx3=-cyv[i],ny3=cxv[i];
       queue.push([p[0]+nx3*d,p[1]+ny3*d],[p[0]-nx3*d,p[1]-ny3*d])}}
-  // rita varje linje med tjocklek efter sjögångsklass (bitvis)
-  const cls=i=>{const v=Hc[i];let kk=0;while(kk<4&&v>=LA_CLASSES[kk][0])kk++;return kk};
-  for(let kk=1;kk<=4;kk++){x.beginPath();x.lineWidth=CREST_W[kk]*dpr;x.strokeStyle=`rgba(15,20,25,${CREST_O[kk]})`;x.lineCap="round";x.lineJoin="round";
-    for(const pts of lines){let pen=false;for(const p of pts){const i=at(p[0],p[1]);const ok=i>=0&&cls(i)===kk;
-        if(ok){if(pen)x.lineTo(p[0]*k,p[1]*k);else{x.moveTo(p[0]*k,p[1]*k);pen=true}}else pen=false}}
-    x.stroke()}
+  // rita linjerna med tjocklek som följer våghöjden steglöst
+  strokeGraded(x,lines,dpr,p=>{const i=at(p[0],p[1]);return i<0?-1:Hc[i]},p=>[p[0]*k,p[1]*k]);
   // tunn kontur runt varje fält av sjögång
   for(let kk=1;kk<=4;kk++){const L1=traceLoops(lvl(A,kk),W0,H0);if(L1.length)strokeLoops(x,L1,h,"rgba(15,20,25,.5)",.8*dpr)}}
 // Zonerna i vattnet som mjuka ytor med tunna konturlinjer: lä och sjögång, temperatur, Hitta plats och hemfridszoner
@@ -406,8 +418,8 @@ function drawZones(R,vx0,vy0,vx1,vy1,mz,Z){const mg=4,cx0=Math.max(0,vx0-R.px0-m
     for(let pass=0;pass<4;pass++)for(let y=1;y<H0-1;y++)for(let xx=1;xx<W0-1;xx++){const i=y*W0+xx;if(ok[i])continue;
       for(const j of [i-1,i+1,i-W0,i+W0])if(ok[j]===1){Fc[i]=Fc[j];Uc[i]=Uc[j];ok[i]=2;break}}
     // avstånd mellan kammar (som 1/avstånd) och eftersäpning i lä, utjämnade över några hundra meter
-    const inv=new Float32Array(n),bow=new Float32Array(n);
-    for(let i=0;i<n;i++){const F2=Math.min(Fc[i],CAP_M),Hs=Math.min(wave(Uc[i],F2),1.4),lamPx=Math.max(4*sc,9+30*Math.sqrt(Hs/1.4));
+    const inv=new Float32Array(n),bow=new Float32Array(n),HV=new Float32Array(n);
+    for(let i=0;i<n;i++){const F2=Math.min(Fc[i],CAP_M),Hs=Math.min(wave(Uc[i],F2),1.4);HV[i]=wave(Uc[i],F2);const lamPx=Math.max(4*sc,9+30*Math.sqrt(Hs/1.4));
       inv[i]=sc/(lamPx*mz_m);bow[i]=(300+1300*Math.sqrt(Hs))*(1-Math.sqrt(F2/CAP_M))}
     const blur=(A2,r)=>{const T=new Float32Array(n);for(let pass=0;pass<2;pass++){
         for(let y=0;y<H0;y++){let s2=0,c2=0;const o=y*W0;for(let xx=0;xx<Math.min(r,W0);xx++){s2+=A2[o+xx];c2++}
@@ -428,13 +440,13 @@ function drawZones(R,vx0,vy0,vx1,vy1,mz,Z){const mg=4,cx0=Math.max(0,vx0-R.px0-m
           if(edge){P[i]=s0;continue}const x2=xx+ddx;if(x2<0||x2>W0-1){P[i]=s0;continue}const x0=x2|0,f=x2-x0,x1=x0+1<W0?x0+1:x0;
           P[i]=P[py*W0+x0]*(1-f)+P[py*W0+x1]*f+tt*mz_m*inv[i]}}}
     const M=new Uint8Array(n);for(let i=0;i<n;i++)M[i]=Math.floor(P[i]-bow[i]*inv[i])&1;
-    const crest=traceLoops(M,W0,H0,3);
-    for(let kk=1;kk<=4;kk++){const P=WAVE_PAT[kk],L1=traceLoops(lvl(A,kk),W0,H0);if(!L1.length)continue;
-      const L2=kk<4?traceLoops(lvl(A,kk+1),W0,H0):[];x.save();x.beginPath();
-      for(const p of L1.concat(L2)){x.moveTo(PX(p[0][0]),PX(p[0][1]));for(let i=1;i<p.length;i++)x.lineTo(PX(p[i][0]),PX(p[i][1]));x.closePath()}
-      x.clip("evenodd");strokeLoops(x,crest,h,`rgba(15,20,25,${CREST_O[kk]})`,CREST_W[kk]*dpr);x.restore();
-      // tunn kontur runt varje fält av sjögång
-      strokeLoops(x,L1,h,"rgba(15,20,25,.5)",.8*dpr)}}
+    const crest=traceLoops(M,W0,H0,3),WW=crest.W,HH=crest.H;
+    // linjerna med steglös tjocklek; lä (under 0,1 m) och ramen ritas inte
+    strokeGraded(x,crest,dpr,q=>{if(q[0]<2.6||q[1]<2.6||q[0]>2*WW-2.6||q[1]>2*HH-2.6)return -1;
+        const xx=Math.floor((q[0]-2)/2),yy=Math.floor((q[1]-2)/2);if(xx<0||yy<0||xx>=W0||yy>=H0)return -1;const i=yy*W0+xx;return A[i]>=1?HV[i]:-1},
+      q=>[PX(q[0]),PX(q[1])]);
+    // tunn kontur runt varje fält av sjögång
+    for(let kk=1;kk<=4;kk++){const L1=traceLoops(lvl(A,kk),W0,H0);if(L1.length)strokeLoops(x,L1,h,"rgba(15,20,25,.5)",.8*dpr)}}
   // temperaturgränser som tunna linjer, som djupkurvor
   if(tb){let lo=1e9,hi=-1e9;for(let i=0;i<n;i++){if(tb[i]===-999)continue;if(tb[i]<lo)lo=tb[i];if(tb[i]>hi)hi=tb[i]}
     for(let b2=lo+1;b2<=hi;b2++)strokeLoops(x,traceLoops(lvl(tb,b2),W0,H0),h,"#0B3550",1.3*dpr)}
