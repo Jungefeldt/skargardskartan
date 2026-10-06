@@ -230,7 +230,7 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     laT=TV;
     // djup per vattenpunkt (för djupskiktet och djupfiltret i Hitta plats)
     const patMode=S.wstyle==="monster"&&haveLa&&Lyr.la&&!F_.on;
-    const useDF=F_.on&&S.depth&&(F_.dmin>0||F_.dmax<60),needD=S.depth&&(Lyr.depth||useDF||patMode);let DV=null,DB=null;
+    const useDF=F_.on&&S.depth&&(F_.dmin>0||F_.dmax<60),needD=S.depth&&(Lyr.depth||useDF);let DV=null,DB=null;
     if(needD){const G=S.depth,Dg=G.D,GW=G.nx,rowF=new Float32Array(R.H),colF=new Float32Array(R.W);DV=new Float32Array(N);DB=new Int16Array(N).fill(-999);
       for(let y=0;y<R.H;y++){const lat=CRS.pointToLatLng(L.point(R.px0,R.py0+y+.5),mz).lat;rowF[y]=Math.max(0,Math.min(G.ny-1.001,(lat-G.lat0)/G.dlat))}
       for(let x=0;x<R.W;x++){const lon=CRS.pointToLatLng(L.point(R.px0+x+.5,R.py0),mz).lng;colF[x]=Math.max(0,Math.min(G.nx-1.001,(lon-G.lon0)/G.dlon))}
@@ -249,7 +249,7 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     hideCanvas();
     const showD=!!(S.depth&&Lyr.depth&&DB),pat=patMode&&!!KARR;
     drawZones(R,vx0,vy0,vx1,vy1,mz,{FOK,KARR:pat?null:KARR,KPAT:pat?KARR:null,BAND:(showT||findOn)?BAND:null,
-      tempFill:showT&&!showLa&&!findOn&&!showD,wdir:w?w.wd:null,SW:pat?SW:null,FV:pat?F:null,UV:pat?UF:null,mpz:m,DB:(showD||pat)&&DB?DB:null,depthFill:!!DB&&((showD&&!showLa&&!findOn)||pat),priv:privOn?R.priv:null});
+      tempFill:showT&&!showLa&&!findOn&&!showD,wdir:w?w.wd:null,SW:pat?SW:null,FV:pat?F:null,UV:pat?UF:null,mpz:m,DB:showD?DB:null,depthFill:showD&&((!showLa&&!findOn)||pat),priv:privOn?R.priv:null});
     // etiketter: namn först, sedan vindpilar, vattentemperatur och sjögång, utan krockar
     const boxes=placeNames();drawArrows(boxes,true);
     if(showT||findOn)placeLabels(boxes,zoneCands(R,BAND,mz,vx0,vy0,vx1,vy1,b=>{const s=(b*tStep)+"–"+((b+1)*tStep)+"°";return{html:'<div class="zlbl">'+s+'</div>',w:s.length*7+6,h:16}},5,260,30),zoneLayer);
@@ -396,9 +396,7 @@ function drawSwanCrests(x,Z,R,cx0,cy0,W0,H0,k,h,dpr,mz,A,lvl){const sc=Math.pow(
     for(let q=0;q<pts.length;q+=6){const p=pts[q],i=at(p[0],p[1]);if(i<0)continue;const d=sep(i),nx3=-cyv[i],ny3=cxv[i];
       queue.push([p[0]+nx3*d,p[1]+ny3*d],[p[0]-nx3*d,p[1]-ny3*d])}}
   // rita linjerna med tjocklek som följer våghöjden steglöst
-  strokeGraded(x,lines,dpr,p=>{const i=at(p[0],p[1]);return i<0?-1:Hc[i]},p=>[p[0]*k,p[1]*k],p=>p[0]<2||p[1]<2||p[0]>W0-2||p[1]>H0-2);
-  // tunn kontur runt varje fält av sjögång
-  for(let kk=1;kk<=4;kk++){const L1=traceLoops(lvl(A,kk),W0,H0);if(L1.length)strokeLoops(x,L1,h,"rgba(15,20,25,.5)",.8*dpr)}}
+  strokeGraded(x,lines,dpr,p=>{const i=at(p[0],p[1]);return i<0?-1:Hc[i]},p=>[p[0]*k,p[1]*k],p=>p[0]<2||p[1]<2||p[0]>W0-2||p[1]>H0-2)}
 // Zonerna i vattnet som mjuka ytor med tunna konturlinjer: lä och sjögång, temperatur, Hitta plats och hemfridszoner
 function drawZones(R,vx0,vy0,vx1,vy1,mz,Z){const mg=4,cx0=Math.max(0,vx0-R.px0-mg),cy0=Math.max(0,vy0-R.py0-mg),cx1=Math.min(R.W,vx1-R.px0+mg),cy1=Math.min(R.H,vy1-R.py0+mg),W0=cx1-cx0,H0=cy1-cy0;
   if(W0<4||H0<4){hideCanvas("zones");return}
@@ -457,9 +455,7 @@ function drawZones(R,vx0,vy0,vx1,vy1,mz,Z){const mg=4,cx0=Math.max(0,vx0-R.px0-m
     // linjerna med steglös tjocklek; lä (under 0,1 m) och ramen ritas inte
     strokeGraded(x,crest,dpr,q=>{if(q[0]<2.6||q[1]<2.6||q[0]>2*WW-2.6||q[1]>2*HH-2.6)return -1;
         const xx=Math.floor((q[0]-2)/2),yy=Math.floor((q[1]-2)/2);if(xx<0||yy<0||xx>=W0||yy>=H0)return -1;const i=yy*W0+xx;return A[i]>=1?HV[i]:-1},
-      q=>[PX(q[0]),PX(q[1])],q=>q[0]<6||q[1]<6||q[0]>2*WW-6||q[1]>2*HH-6);
-    // tunn kontur runt varje fält av sjögång
-    for(let kk=1;kk<=4;kk++){const L1=traceLoops(lvl(A,kk),W0,H0);if(L1.length)strokeLoops(x,L1,h,"rgba(15,20,25,.5)",.8*dpr)}}
+      q=>[PX(q[0]),PX(q[1])],q=>q[0]<6||q[1]<6||q[0]>2*WW-6||q[1]>2*HH-6)}
   // temperaturgränser som tunna linjer, som djupkurvor
   if(tb){let lo=1e9,hi=-1e9;for(let i=0;i<n;i++){if(tb[i]===-999)continue;if(tb[i]<lo)lo=tb[i];if(tb[i]>hi)hi=tb[i]}
     for(let b2=lo+1;b2<=hi;b2++)strokeLoops(x,traceLoops(lvl(tb,b2),W0,H0),h,"#0B3550",1.3*dpr)}
@@ -520,7 +516,7 @@ function legend(){const L_=$("legend"),w=laWind||domainWind(S.ti);let h="";
   else if(S.layers.temp&&tRange)h+=`<div class="grad" style="background:linear-gradient(90deg,${TSTOPS.map(s=>s[1]+" "+(s[0]/24*100)+"%").join(",")})"></div><div class="gl"><span>0</span><span>6</span><span>12</span><span>18</span><span>24 °C</span></div>`;
   if((S.layers.la||S.find.on)&&w)h=`<span><b>${dirName(w.wd)} ${f0(w.ws)} m/s${w.gust!=null?", byar "+f0(w.gust):""}</b>${S.src==="prognos"?" (medel för området) · räknat på "+(S.basis==="byar"&&w.gust!=null?"byar":"medelvind"):""}</span>`+h;
   if(S.privOk&&S.layers.priv)h+=`<span><i style="background:rgba(70,56,50,.65);border:2px solid #281E1C"></i>Inom ${S.privM} m från brygga eller hus</span>`;
-  if(S.depth&&(S.layers.depth||(S.wstyle==="monster"&&S.layers.la&&!S.find.on)))h+=`<span style="flex:1 1 100%">Djup (ungefärligt): `+DEPTH_STEPS.map((d,k)=>`<i style="background:${DEPTH_COL[k]};margin:0 3px 0 6px"></i>${k===DEPTH_STEPS.length-1?d+"+":d}`).join("")+` m</span>`;
+  if(S.depth&&S.layers.depth)h+=`<span style="flex:1 1 100%">Djup (ungefärligt): `+DEPTH_STEPS.map((d,k)=>`<i style="background:${DEPTH_COL[k]};margin:0 3px 0 6px"></i>${k===DEPTH_STEPS.length-1?d+"+":d}`).join("")+` m</span>`;
   if(S.layers.arrows)h+=`<span style="flex:1 1 100%">Vindpilar: `+[["svag",0],["måttlig",4],["frisk",8],["hård",14],["mycket hård",20]].map(x=>`<i style="background:${windCol(x[1])};margin:0 3px 0 6px;border-radius:50%;width:10px"></i>${x[0]}`).join("")+`</span>`;
   if((S.layers.temp||S.find.on)&&tRange)h+=`<span><i style="background:#0B3550;height:2px;border:0"></i>Vattentemp, zoner om ${tStep} °C (${f0(tRange[0])} till ${f0(tRange[1])} här)</span>`;
   L_.innerHTML=h}
