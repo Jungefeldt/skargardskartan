@@ -67,7 +67,17 @@ def encode(F, path):
     return [lo, hi]
 
 
+def need_scipy():
+    try:
+        import scipy  # noqa: F401
+    except ImportError:
+        import subprocess
+        log("Installerar scipy ...")
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "scipy"], check=True)
+
+
 def build(budget_s=12 * 60):
+    need_scipy()
     from PIL import Image
     from scipy import ndimage
     t_end = time.time() + budget_s
