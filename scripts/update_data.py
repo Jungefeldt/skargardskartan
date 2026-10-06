@@ -392,6 +392,11 @@ if __name__ == "__main__":
         with_time_limit(28 * 60, lambda: swan_run.build_swan(25 * 60))
     except Exception as ex:  # noqa: BLE001
         print(f"SWAN kunde inte köras ({ex}), försöker igen nästa körning")
+    try:
+        import vag_fas
+        with_time_limit(14 * 60, lambda: vag_fas.build(12 * 60))
+    except Exception as ex:  # noqa: BLE001
+        print(f"Vågfaserna kunde inte räknas ({ex}), försöker igen nästa körning")
     if manual:
         print("Manuell körning: hemfridszonerna byggs i de automatiska körningarna")
     else:
