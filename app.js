@@ -17,6 +17,7 @@ L.control.scale({imperial:false,position:"topleft"}).addTo(map);
 map.createPane("tint").style.zIndex=300; map.getPane("tint").style.pointerEvents="none"; map.getPane("tint").style.mixBlendMode="color";
 map.createPane("zones").style.zIndex=345; map.getPane("zones").style.pointerEvents="none";
 map.createPane("crests").style.zIndex=346; map.getPane("crests").style.pointerEvents="none";
+map.createPane("relief").style.zIndex=347; map.getPane("relief").style.pointerEvents="none";
 map.createPane("ov").style.zIndex=350; map.getPane("ov").style.pointerEvents="none";
 map.createPane("coast").style.zIndex=360; map.getPane("coast").style.pointerEvents="none";
 map.createPane("lbl").style.zIndex=640; map.getPane("lbl").style.pointerEvents="none";
@@ -229,7 +230,7 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     lastR=R;
     // kustlinje: skarp vektorlinje i skärmens upplösning, som på ett sjökort
     await drawCoast();if(my!==seq)return;
-    if(!haveLa&&!haveT&&!privOn&&!(S.depth&&Lyr.depth)){hideCanvas();hideCanvas("zones");hideCanvas("crests");crestSet=null;laR=null;laT=null;drawArrows(placeNames(),true);legend();if(sel)sheet();return}
+    if(!haveLa&&!haveT&&!privOn&&!(S.depth&&Lyr.depth)){hideCanvas();hideCanvas("zones");hideCanvas("crests");crestSet=null;reliefHide();laR=null;laT=null;drawArrows(placeNames(),true);legend();if(sel)sheet();return}
     // lä
     // riktningen avrundas till 5 grader; samma vy och riktning återanvänder beräkningen (snabb uppspelning)
     let F=null;if(haveLa){const dr=Math.round(w.wd/5)*5,key=[mz,R.px0,R.py0,R.W,R.H,dr].join("|");
@@ -281,7 +282,8 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
         FOK[i]=k<=F_.maxK&&tv>=F_.tmin&&tv<=F_.tmax&&!(S.privOk&&R.priv[i])&&(!useDF||(DV[i]>=F_.dmin&&DV[i]<=F_.dmax))?1:0}}
     hideCanvas();
     const showD=!!(S.depth&&Lyr.depth&&DB),pat=patMode&&!!KARR;
-    drawZones(R,vx0,vy0,vx1,vy1,mz,{FOK,KARR:pat?null:KARR,KPAT:pat?KARR:null,BAND:(showT||findOn)?BAND:null,
+    let RELIEF=null;if(pat&&S.wstyle==="rorlig"&&reliefPossible(w.wd)){RELIEF=new Float32Array(N);for(let i=0;i<N;i++)if(WA[i])RELIEF[i]=HS(i)}
+    drawZones(R,vx0,vy0,vx1,vy1,mz,{RELIEF,FOK,KARR:pat?null:KARR,KPAT:pat?KARR:null,BAND:(showT||findOn)?BAND:null,
       tempFill:showT&&!showLa&&!findOn&&!showD,wdir:w?w.wd:null,SW:pat?SW:null,FV:pat?F:null,UV:pat?UF:null,mpz:m,DB:showD?DB:null,depthFill:showD&&((!showLa&&!findOn)||pat),priv:privOn?R.priv:null});
     // etiketter: namn först, sedan vindpilar, vattentemperatur och sjögång, utan krockar
     const boxes=placeNames();drawArrows(boxes,true);
@@ -402,6 +404,104 @@ function animLoop(ts){if(!animOn||!crestSet){animRAF=0;return}drawCrestSet(((ts-
 function startAnim(){animOn=S.wstyle==="rorlig";if(!animOn&&animRAF){cancelAnimationFrame(animRAF);animRAF=0}
   if(animOn&&crestSet&&!animRAF){animT0=performance.now();animRAF=requestAnimationFrame(animLoop)}}
 document.addEventListener("visibilitychange",()=>{if(document.hidden){cancelAnimationFrame(animRAF);animRAF=0}else startAnim()});
+// ------------------------------------------------------------------ rörliga vågor i relief (WebGL)
+// Vågytan räknas på grafikkortet som en summa av många vågor med olika riktning och längd
+// (kortkammad vindsjö, fler små än stora). Varje våg uttrycks i fasfälten P (längs vågornas
+// gångriktning) och Q (tvärs över), som räknats i förväg från SWAN (data/fas), så att vågorna
+// följer SWAN:s riktning och böjer sig runt öarna. Längre vågor går fortare, så mönstret
+// upprepar sig aldrig. Ytan skuggas som en terrängkarta med ljuset lågt från det håll vågorna
+// går mot: framsidorna ljusa, baksidorna i skugga.
+const NCOMP=48,F0=1/2.6,REL_EX=20;   // REL_EX: hur mycket vågornas höjd överdrivs i skuggningen
+const WCOMP=(()=>{let s=12345;const rnd=()=>{s=(s*1103515245+12345)%2147483648;return s/2147483648};
+  const gauss=()=>{let u=0;while(!u)u=rnd();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*rnd())};
+  const out=[];let sum=0;
+  for(let i=0;i<NCOMP;i++){const r=Math.exp(Math.log(0.6)+(i+rnd())/NCOMP*Math.log(10));const spread=0.45+0.25*Math.max(0,Math.log(r));
+    const th=Math.max(-1.5,Math.min(1.5,gauss()*spread));
+    const a=(r<1?Math.exp(-(Math.log(r)**2)/0.08):Math.pow(r,-2))*Math.cos(th)**2*Math.sqrt(-2*Math.log(Math.max(1e-6,rnd())));
+    out.push([r*1.6,th,a,rnd()*2*Math.PI]);sum+=a*a}
+  const n=Math.sqrt(sum);return out.map(c=>[c[0],c[1],c[2]/n,c[3]])})();
+const WG={ok:null,gl:null,canvas:null,prog:null,u:{},tex:{},name:null,raf:0,t0:performance.now(),st:null};
+const VS="attribute vec2 a;varying vec2 v;void main(){v=vec2(a.x*.5+.5,.5-a.y*.5);gl_Position=vec4(a,0.,1.);}";
+const FS=`precision highp float;
+varying vec2 v;
+uniform sampler2D uP,uQ,uHW;
+uniform vec4 uPR,uGeo,uGrid,uC[${NCOMP}],uD[${NCOMP}];
+uniform vec2 uN,uM;
+uniform float uT,uPx,uEx;
+float dec(sampler2D s,vec2 ij){vec4 c=texture2D(s,(ij+.5)/uN);return(c.r*65280.+c.g*255.)/65535.;}
+float fld(sampler2D s,vec2 g){vec2 p=g-.5,i=floor(p),f=p-i;
+  return mix(mix(dec(s,i),dec(s,i+vec2(1.,0.)),f.x),mix(dec(s,i+vec2(0.,1.)),dec(s,i+vec2(1.,1.)),f.x),f.y);}
+void main(){
+  vec4 hw=texture2D(uHW,v);if(hw.g<.02){gl_FragColor=vec4(0.);return;}
+  float H=hw.r*255./200.;
+  float lon=mix(uGeo.x,uGeo.y,v.x),lat=mix(uGeo.z,uGeo.w,v.y);
+  vec2 g=vec2((lon-uGrid.x)/uGrid.z,(uGrid.y-lat)/uGrid.w);
+  float P=uPR.x+(uPR.y-uPR.x)*fld(uP,g),Q=uPR.z+(uPR.w-uPR.z)*fld(uQ,g);
+  float Px=uPR.x+(uPR.y-uPR.x)*fld(uP,g+vec2(1.,0.)),Py=uPR.x+(uPR.y-uPR.x)*fld(uP,g+vec2(0.,1.));
+  float Qx=uPR.z+(uPR.w-uPR.z)*fld(uQ,g+vec2(1.,0.)),Qy=uPR.z+(uPR.w-uPR.z)*fld(uQ,g+vec2(0.,1.));
+  vec2 gP=vec2((Px-P)/uM.x,(P-Py)/uM.y),gQ=vec2((Qx-Q)/uM.x,(Q-Qy)/uM.y);   // per meter, öster och norr
+  float lam=1./max(length(gP),1e-5);
+  vec2 gr=vec2(0.);
+  for(int i=0;i<${NCOMP};i++){vec4 c=uC[i];vec4 d=uD[i];
+    float fade=smoothstep(3.,8.,lam*d.y/uPx);if(fade<=0.)continue;     // för korta vågor för pixlarna tonas bort
+    float a=c.x*P+c.y*Q-d.x*uT+c.w;gr-=c.z*fade*sin(a)*(c.x*gP+c.y*gQ);}
+  gr*=H*uEx;
+  vec3 n=normalize(vec3(-gr,1.));
+  vec2 tr=gP/max(length(gP),1e-6);float e=.61;                      // ljuset 35 grader upp, från dit vågorna går
+  float lit=max(dot(n,vec3(tr*cos(e),sin(e))),0.)/sin(e);
+  float soft=mix(.3,.15,clamp(H/.5,0.,1.));
+  float rel=(1.-soft)*lit+soft*pow(n.z,4.);
+  rel=mix(1.,rel,clamp(H/.3,.25,1.));                                 // lugnt vatten: mjukare skuggor
+  vec3 base=mix(vec3(.667,.827,.875),vec3(.463,.659,.776),clamp(H/.45,0.,1.));
+  vec3 col=base*(.42+.58*clamp(rel,0.,1.6))+.22*clamp(rel-1.,0.,1.);
+  gl_FragColor=vec4(col,clamp(hw.g*1.5,0.,1.));}`;
+function glInit(canvas){try{
+  const gl=canvas.getContext("webgl",{premultipliedAlpha:false,antialias:false,alpha:true});if(!gl)return false;
+  const sh=(type,src)=>{const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));return s};
+  const p=gl.createProgram();gl.attachShader(p,sh(gl.VERTEX_SHADER,VS));gl.attachShader(p,sh(gl.FRAGMENT_SHADER,FS));gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));
+  gl.useProgram(p);const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+  const al=gl.getAttribLocation(p,"a");gl.enableVertexAttribArray(al);gl.vertexAttribPointer(al,2,gl.FLOAT,false,0,0);
+  for(const k of ["uP","uQ","uHW","uPR","uGeo","uGrid","uN","uM","uT","uPx","uEx","uC","uD"])WG.u[k]=gl.getUniformLocation(p,k);
+  const C=new Float32Array(NCOMP*4),D=new Float32Array(NCOMP*4);
+  WCOMP.forEach(([r,th,a,ph],i)=>{C.set([2*Math.PI*r*Math.cos(th),2*Math.PI*r*Math.sin(th),a,ph],i*4);D.set([2*Math.PI*F0*Math.sqrt(r),1/r,0,0],i*4)});
+  gl.uniform4fv(WG.u.uC,C);gl.uniform4fv(WG.u.uD,D);gl.uniform1f(WG.u.uEx,window.__ex||REL_EX);gl.uniform1i(WG.u.uP,0);gl.uniform1i(WG.u.uQ,1);gl.uniform1i(WG.u.uHW,2);
+  WG.gl=gl;WG.canvas=canvas;WG.prog=p;WG.name=null;return true}catch(e){console.warn("Rörliga vågor i relief stöds inte här:",e);return false}}
+function glTex(unit,src,linear,w,h){const gl=WG.gl,t=WG.tex[unit]||(WG.tex[unit]=gl.createTexture());gl.activeTexture(gl.TEXTURE0+unit);gl.bindTexture(gl.TEXTURE_2D,t);
+  const f=linear?gl.LINEAR:gl.NEAREST;gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,f);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,f);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  if(src instanceof Uint8Array)gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,src);else gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,src)}
+const fasImgs=new Map();
+function fasImg(name){if(fasImgs.has(name))return fasImgs.get(name);
+  const ld=s=>new Promise((res,rej)=>{const im=new Image();im.onload=()=>res(im);im.onerror=rej;im.src="data/fas/"+name+"_"+s+".png"});
+  const p=Promise.all([ld("p"),ld("q")]).catch(()=>null);fasImgs.set(name,p);return p}
+function fasName(wd){const X=S.fas;if(!X)return null;let best=null,bd=1e9;for(const d of X.dirs){const nm="d"+String(Math.round(d*10)).padStart(4,"0");if(!X.done.includes(nm))continue;
+  const dd=Math.abs(((wd-d+540)%360)-180);if(dd<bd){bd=dd;best=nm}}return best}
+function reliefPossible(wd){return WG.ok!==false&&!!S.fas&&!!fasName(wd)}
+function reliefHide(){cancelAnimationFrame(WG.raf);WG.raf=0;WG.st=null;if(overlays.relief)overlays.relief.getElement().style.display="none"}
+function reliefFrame(){const st=WG.st,gl=WG.gl;if(!st||!gl||document.hidden){WG.raf=0;return}
+  gl.viewport(0,0,WG.canvas.width,WG.canvas.height);gl.uniform1f(WG.u.uT,(performance.now()-WG.t0)/1000);gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+  WG.raf=requestAnimationFrame(reliefFrame)}
+document.addEventListener("visibilitychange",()=>{if(!document.hidden&&WG.st&&!WG.raf)WG.raf=requestAnimationFrame(reliefFrame)});
+async function reliefShow(R,cx0,cy0,W0,H0,k,mz,Hc,wd){const name=fasName(wd),imgs=await fasImg(name);if(!imgs){WG.ok=false;reliefHide();schedule();return}
+  const px0=R.px0+cx0,py0=R.py0+cy0,b=L.latLngBounds(CRS.pointToLatLng(L.point(px0,py0+H0),mz),CRS.pointToLatLng(L.point(px0+W0,py0),mz));
+  let o=overlays.relief;if(!o){o=overlays.relief=new CanvasOverlay("",b,{pane:"relief",interactive:false}).addTo(map)}else o.setBounds(b);
+  const c=o.getElement();c.style.display="";
+  // på skärmar med hög upplösning räknas ytan i något lägre upplösning, för att spara batteri
+  const dpr=window.devicePixelRatio||1,kg=k/Math.max(1,dpr/1.5),cw=Math.round(W0*kg),ch=Math.round(H0*kg);
+  if(c.width!==cw||c.height!==ch){c.width=cw;c.height=ch}
+  if(WG.canvas!==c&&!glInit(c)){WG.ok=false;reliefHide();schedule();return}
+  WG.ok=true;const gl=WG.gl,X=S.fas;
+  if(WG.name!==name){glTex(0,imgs[0],false);glTex(1,imgs[1],false);WG.name=name}
+  // våghöjd (röd, 200 per meter) och vatten (grön) för utsnittet
+  const hw=new Uint8Array(W0*H0*4);for(let y=0;y<H0;y++)for(let x=0;x<W0;x++){const i=y*W0+x,j=(cy0+y)*R.W+cx0+x;hw[i*4]=Math.min(255,Math.round(Math.max(0,Hc[j])*200));hw[i*4+1]=R.water[j]?255:0;hw[i*4+3]=255}
+  glTex(2,hw,true,W0,H0);
+  const nw=CRS.pointToLatLng(L.point(px0,py0),mz),se=CRS.pointToLatLng(L.point(px0+W0,py0+H0),mz),r=X.range[name],lat=(nw.lat+se.lat)/2;
+  gl.uniform4f(WG.u.uPR,r[0],r[1],r[2],r[3]);gl.uniform4f(WG.u.uGeo,nw.lng,se.lng,nw.lat,se.lat);
+  gl.uniform4f(WG.u.uGrid,X.lon0,X.lat0,X.dlon,X.dlat);gl.uniform2f(WG.u.uN,X.nx,X.ny);
+  gl.uniform2f(WG.u.uM,X.dlon*111320*Math.cos(lat*Math.PI/180),X.dlat*111320);gl.uniform1f(WG.u.uPx,mpp(mz,lat)/kg);
+  WG.st={name};if(!WG.raf)WG.raf=requestAnimationFrame(reliefFrame)}
+
 // Vågkammar som följer SWAN:s vågriktning: jämnt fördelade linjer som hela tiden ligger tvärs
 // mot vågornas gång. Där vågorna böjer sig (mot grunt vatten, runt uddar och in i lä) böjer sig
 // linjerna med. Avståndet mellan linjerna och deras tjocklek följer våghöjden.
@@ -449,7 +549,7 @@ function drawSwanCrests(x,Z,R,cx0,cy0,W0,H0,k,h,dpr,mz,A,lvl){const sc=Math.pow(
     p=>{const i=at(p[0],p[1]);if(i<0)return[0,0];const d=sep(i)*k;return[tvx[i]*d,tvy[i]*d]})}
 // Zonerna i vattnet som mjuka ytor med tunna konturlinjer: lä och sjögång, temperatur, Hitta plats och hemfridszoner
 function drawZones(R,vx0,vy0,vx1,vy1,mz,Z){const mg=4,cx0=Math.max(0,vx0-R.px0-mg),cy0=Math.max(0,vy0-R.py0-mg),cx1=Math.min(R.W,vx1-R.px0+mg),cy1=Math.min(R.H,vy1-R.py0+mg),W0=cx1-cx0,H0=cy1-cy0;
-  if(W0<4||H0<4){hideCanvas("zones");hideCanvas("crests");crestSet=null;return}
+  if(W0<4||H0<4){hideCanvas("zones");hideCanvas("crests");crestSet=null;reliefHide();return}
   const dpr=window.devicePixelRatio||1;let k=Math.pow(2,map.getZoom()-mz)*dpr;k=Math.min(k,4096/W0,4096/H0);const h=k/2;
   const x=overlayCanvas("zones",mz,R.px0+cx0,R.py0+cy0,W0,H0,k),n=W0*H0;
   const crop=A=>{const o=new Int16Array(n);for(let y=0;y<H0;y++){const s=(cy0+y)*R.W+cx0;for(let xx=0;xx<W0;xx++)o[y*W0+xx]=A[s+xx]}return o};
@@ -470,9 +570,10 @@ function drawZones(R,vx0,vy0,vx1,vy1,mz,Z){const mg=4,cx0=Math.max(0,vx0-R.px0-m
   // Sjögång som vågkammar ovanpå djupet: linjerna ligger tvärs mot vinden, buktar ut i vindens
   // riktning där sjön är utvecklad och släpar efter i lä bakom öar och stränder. Avståndet mellan
   // linjerna växer med våghöjden. Linjerna är nivåkurvor för en "fas" som räknas per punkt.
-  let crestB=null;
-  if(Z.KPAT&&Z.SW){crestB=drawSwanCrests(x,Z,R,cx0,cy0,W0,H0,k,h,dpr,mz,dil(crop(Z.KPAT)),lvl);}
-  else if(Z.KPAT&&Z.FV&&Z.UV){const A=dil(crop(Z.KPAT)),PX=v=>(v-2)*h,sc=Math.pow(2,map.getZoom()-mz),mz_m=Z.mpz;
+  let crestB=null,relief=false;
+  if(Z.KPAT&&Z.RELIEF){relief=true;reliefShow(R,cx0,cy0,W0,H0,k,mz,Z.RELIEF,Z.wdir)}
+  else if(Z.KPAT&&Z.SW){crestB=drawSwanCrests(x,Z,R,cx0,cy0,W0,H0,k,h,dpr,mz,dil(crop(Z.KPAT)),lvl);}
+  else if(Z.KPAT&&Z.FV&&Z.UV&&!relief){const A=dil(crop(Z.KPAT)),PX=v=>(v-2)*h,sc=Math.pow(2,map.getZoom()-mz),mz_m=Z.mpz;
     const th=(Z.wdir+180)*Math.PI/180,dx=Math.sin(th),dy=-Math.cos(th),gx0=R.px0+cx0,gy0=R.py0+cy0;
     // fetch och vind för utsnittet (land får grannens värden, så att linjerna fortsätter jämnt in mot stranden)
     const Fc=new Float32Array(n),Uc=new Float32Array(n),ok=new Uint8Array(n);
@@ -524,7 +625,8 @@ function drawZones(R,vx0,vy0,vx1,vy1,mz,Z){const mg=4,cx0=Math.max(0,vx0-R.px0-m
   // vågkammarna i ett eget lager, så att de kan ritas om (animeras) utan att resten räknas om
   if(crestB){const x2=overlayCanvas("crests",mz,R.px0+cx0,R.py0+cy0,W0,H0,k);crestSet={x:x2,cw:x2.canvas.width,ch:x2.canvas.height,buckets:crestB,clip};
     drawCrestSet(0);startAnim()}
-  else{crestSet=null;hideCanvas("crests")}}
+  else{crestSet=null;hideCanvas("crests")}
+  if(!relief)reliefHide()}
 let MASK_MAX=13,lastCoast=null;
 async function drawCoast(){const zz=map.getZoom(),cz=Math.min(MASK_MAX,Math.max(11,zz)),bnd=map.getBounds().pad(.04),
   nw=CRS.latLngToPoint(bnd.getNorthWest(),cz),se=CRS.latLngToPoint(bnd.getSouthEast(),cz),x0=Math.floor(nw.x),y0=Math.floor(nw.y),W0=Math.ceil(se.x)-x0,H0=Math.ceil(se.y)-y0;
@@ -643,7 +745,7 @@ $("explain").onclick=()=>{let h=`<h3>Färger för lä och sjögång</h3><p class
     <table class="deftab"><tr><th>Klass</th><th>Våg</th><th>Så känns det</th></tr>`+LA_CLASSES.map((c,i)=>`<tr><td><i style="background:${c[2]}"></i>${c[1]}</td><td>${LA_DEF[i][0]}</td><td>${LA_DEF[i][1]}</td></tr>`).join("")+`</table>
     <h3>Räkna på byar eller medelvind</h3><p class="note" style="margin-top:2px"><b>Byar</b> (förvalt) räknar vågorna på den starkaste vinden i prognosen. Det ger en försiktig bild, bra när du ska ligga still och fiska. <b>Medelvind</b> stämmer bättre med hur vågorna oftast blir, men underskattar läget när det är byigt.</p>
     <h3>Vindstyrka (SMHI)</h3><table class="deftab"><tr><th>Benämning</th><th>m/s</th></tr><tr><td>Lugnt</td><td>0–0,2</td></tr><tr><td>Svag vind</td><td>0,3–3</td></tr><tr><td>Måttlig vind</td><td>4–7</td></tr><tr><td>Frisk vind</td><td>8–13</td></tr><tr><td>Hård vind</td><td>14–19</td></tr><tr><td>Mycket hård vind</td><td>20–24</td></tr><tr><td>Storm</td><td>25–32</td></tr></table>
-    <h3>Vågmönster</h3><p class="note" style="margin-top:2px">Varje linje är en vågkam och ligger tvärs mot vågornas gång. Där det finns beräkningar från vågmodellen SWAN (TU Delft) följer linjerna modellens vågriktning, som tar hänsyn till lä bakom öar, refraktion mot grunt vatten och diffraktion runt uddar. Tätare och tunnare linjer betyder mindre vågor, glesare och kraftigare linjer större vågor.</p>
+    <h3>Vågmönster</h3><p class="note" style="margin-top:2px">Varje linje är en vågkam och ligger tvärs mot vågornas gång. Där det finns beräkningar från vågmodellen SWAN (TU Delft) följer linjerna modellens vågriktning, som tar hänsyn till lä bakom öar, refraktion mot grunt vatten och diffraktion runt uddar. Tätare och tunnare linjer betyder mindre vågor, glesare och kraftigare linjer större vågor. <b>Rörliga vågor</b> visar i stället vågytan i relief, med ljuset från det håll vågorna går mot: framsidorna är ljusa och baksidorna skuggade. Vågornas höjd är kraftigt överdriven och avståndet mellan dem förstorat, så att de syns i kartskala.</p>
     <h3>Lä för vinden</h3><p class="note" style="margin-top:2px">Bakom öar, uddar och skog är vinden svagare. Dämpningen räknas från markhöjden i Lantmäteriets höjdmodell och skogen i OpenStreetMap (räknad som 15 m hög): störst närmast hindret, och vinden är nästan tillbaka efter 20 till 30 gånger hindrets höjd. Uppskruvad vind runt uddar och i smala sund ingår inte.</p>
     <h3>Höjdkurvor</h3><p class="note" style="margin-top:2px">Höjdkurvorna på land kommer från Lantmäteriets laserskannade höjdmodell. Avståndet mellan kurvorna är 10 m, och 5 m när man zoomat in; var femte kurva är kraftigare.</p>
     <h3>Djup</h3><p class="note" style="margin-top:2px">Djupzonerna kommer från EMODnet Bathymetry (DTM 2024). I svenska vatten är underlaget medvetet glesat av sekretesskäl, så djupen är ungefärliga: bra för att skilja grunda vikar från djupa fjärdar, men enskilda grund, kanter och smala sund syns inte. "Nära lodning" betyder att det finns en verklig mätning i närheten, "uppskattat" att djupet är uträknat från omgivningen.</p>
@@ -703,6 +805,7 @@ $("loc").onclick=()=>{if(me){map.setView(me.getLatLng(),Math.max(map.getZoom(),1
 (async()=>{
   try{S.names=await getJSON("mask/namn.json")}catch(_){}
   try{const X=await getJSON("data/swan/index.json");if(X.done&&X.done.length)S.swan=X}catch(_){}
+  try{const X=await getJSON("data/fas/index.json");if(X.done&&X.done.length)S.fas=X}catch(_){}
   try{const V=await getJSON("data/vind/index.json");if(V.done&&V.done.length===V.dirs.length)S.vind=V}catch(_){}
   // höjdmodellen för höjdkurvorna laddas i bakgrunden
   getJSON("data/terrang.json").then(T=>{const b=atob(T.h),a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);T.H=a;delete T.h;S.terr=T;schedule()})
