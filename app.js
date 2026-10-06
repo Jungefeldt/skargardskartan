@@ -238,7 +238,9 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
       for(let y=0;y<R.H;y++){const fy=rowF[y],ya=fy|0,ty=fy-ya,r0=ya*GW,r1=r0+GW;for(let x=0;x<R.W;x++){const i=y*R.W+x;if(!WA[i])continue;const fx=colF[x],xa=fx|0,tx=fx-xa;
           const d=((Dg[r0+xa]*(1-tx)+Dg[r0+xa+1]*tx)*(1-ty)+(Dg[r1+xa]*(1-tx)+Dg[r1+xa+1]*tx)*ty)/2;DV[i]=d;DB[i]=depthBand(d)}}}
     // SWAN-fält för vågmönstret, om det finns för området
-    let SW=null;if(patMode&&S.swan){const C=await swanCase(w.wd,S.src==="egen"?S.own.sp:calcU(w));if(my!==seq)return;if(C){SW=swanSample(R,mz,C);SW.dir=C.dir}}
+    let SW=null;if(patMode&&S.swan){const C=await swanCase(w.wd,S.src==="egen"?S.own.sp:calcU(w));if(my!==seq)return;if(C){SW=swanSample(R,mz,C);SW.dir=C.dir;
+        // utanför SWAN-området: våghöjd från den enklare beräkningen och vågriktning efter vinden
+        for(let i=0;i<N;i++)if(WA[i]&&SW.H[i]<0){SW.H[i]=wave(UF[i],F[i]);SW.D[i]=w.wd;SW.T[i]=-1}}}
     lastSW=SW?{R,mz,...SW}:null;
     // klasser per vattenpunkt (används både för ytorna och etiketterna)
     const showLa=haveLa&&Lyr.la,showT=haveT&&Lyr.temp,findOn=F_.on&&haveLa&&haveT;
@@ -600,7 +602,7 @@ function sheet(){const ll=sel,W=S.wind,w=W?windAt(ll.lat,ll.lng,S.ti):null,di=te
   if(wt!=null)h+=`<dt>Vattentemp</dt><dd>${f0(wt)} °C</dd>`;
   const wet=la!=null?la>=0:onWater(ll);
   if(lastSW&&wet){const R2=lastSW.R,p=CRS.latLngToPoint(ll,R2.z),xx=Math.floor(p.x-R2.px0),yy=Math.floor(p.y-R2.py0);
-    if(xx>=0&&yy>=0&&xx<R2.W&&yy<R2.H){const i=yy*R2.W+xx;if(lastSW.H[i]>=0)h+=`<dt>Vågor (SWAN)</dt><dd>ca ${f1(lastSW.H[i])} m, period ${f1(lastSW.T[i])} s, från ${dirName(lastSW.D[i])}</dd>`}}
+    if(xx>=0&&yy>=0&&xx<R2.W&&yy<R2.H){const i=yy*R2.W+xx;if(lastSW.H[i]>=0&&lastSW.T[i]>=0)h+=`<dt>Vågor (SWAN)</dt><dd>ca ${f1(lastSW.H[i])} m, period ${f1(lastSW.T[i])} s, från ${dirName(lastSW.D[i])}</dd>`}}
   if(S.depth&&wet){const d=depthAt(ll.lat,ll.lng);if(d!=null)h+=`<dt>Djup</dt><dd>ca ${f0(d)} m <span style="font-weight:500;color:var(--muted)">(${depthMeasured(ll.lat,ll.lng)?"nära lodning":"uppskattat"})</span></dd>`}
   if(S.find.on&&la!=null&&la>=0&&lu!=null&&wt!=null){let k=0;const hs=wave(lu,la);while(hs>=LA_CLASSES[k][0])k++;const ok=k<=S.find.maxK&&wt>=S.find.tmin&&wt<=S.find.tmax;h+=`<dt>Villkoren</dt><dd>${ok?"uppfylls":"uppfylls inte"}</dd>`}
   h+=`</dl>`;
