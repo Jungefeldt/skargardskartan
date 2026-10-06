@@ -334,7 +334,7 @@ function crestOpacity(w){const G=CREST_GRADE;if(w<=G[0][1])return G[0][2]*Math.m
 // Ritar linjer vars tjocklek följer våghöjden längs linjen. Våghöjden jämnas ut längs linjen och
 // tjockleken delas i fina steg, så att övergångarna blir mjuka utan synliga skarvar. Där en linje
 // tar slut smalnar den av och tonas ut, i stället för att sluta tvärt.
-function strokeGraded(x,lines,dpr,hAt,toC,isEdge){const STEP=.1,TAPER=34*dpr,buckets=new Map();
+function strokeGraded(x,lines,dpr,hAt,toC,isEdge){const STEP=.1,TAPER=80*dpr,THIN=.35,buckets=new Map();
   for(const Lp of lines){const n=Lp.length;if(n<2)continue;const H=new Float32Array(n);for(let i=0;i<n;i++)H[i]=hAt(Lp[i]);
     // dela upp i sammanhängande bitar (där det inte är lä) och mät avståndet längs varje bit
     let a=0;while(a<n){while(a<n&&H[a]<0.1)a++;if(a>=n)break;let b=a;while(b+1<n&&H[b+1]>=0.1)b++;
@@ -345,12 +345,16 @@ function strokeGraded(x,lines,dpr,hAt,toC,isEdge){const STEP=.1,TAPER=34*dpr,buc
       const tl=Math.min(TAPER,t0&&t1?len/2:len);
       let run=null,lev=-1;
       for(let q=0;q<C.length;q++){const i=a+q;let s=0,c=0;for(let j=Math.max(a,i-6);j<=Math.min(b,i+6);j++){s+=H[j];c++}
-        const e=Math.min(t0?D[q]:1e9,t1?len-D[q]:1e9),tp=tl>0?Math.min(1,e/tl):0,taper=tp*tp*(3-2*tp);      // mjuk S-kurva mot ändarna
-        const l=Math.max(1,Math.round(crestWidth(s/c)*taper/STEP));
-        if(l!==lev||!run){if(run)run.push(C[q]);run=[];lev=l;let bk=buckets.get(l);if(!bk)buckets.set(l,bk=[]);bk.push(run)}run.push(C[q])}
+        // mot ändarna: först smalnar linjen av mjukt till ett tunt streck, sedan tonas det tunna strecket bort
+        const e=Math.min(t0?D[q]:1e9,t1?len-D[q]:1e9),tp=tl>0?Math.min(1,e/tl):0,full=crestWidth(s/c),o0=crestOpacity(full);let w,o;
+        if(tp<.4){w=Math.min(THIN,full);o=o0*.85*(tp/.4)}
+        else{const u=(tp-.4)/.6,sm=u*u*(3-2*u);w=THIN+(full-THIN)*sm;o=o0*(.85+.15*sm)}
+        const l=Math.max(1,Math.round(w/STEP)),oq=Math.round(o*20),key=l*100+oq;
+        if(oq<1){run=null;lev=-1;continue}
+        if(key!==lev||!run){if(run)run.push(C[q]);run=[];lev=key;let bk=buckets.get(key);if(!bk)buckets.set(key,bk=[]);bk.push(run)}run.push(C[q])}
       a=b+1}}
   x.lineCap="round";x.lineJoin="round";
-  for(const [l,runs] of buckets){const w=l*STEP;x.lineWidth=w*dpr;x.strokeStyle=`rgba(15,20,25,${crestOpacity(w).toFixed(3)})`;x.beginPath();
+  for(const [key,runs] of buckets){const w=Math.floor(key/100)*STEP,o=(key%100)/20;x.lineWidth=w*dpr;x.strokeStyle=`rgba(15,20,25,${o.toFixed(3)})`;x.beginPath();
     for(const r of runs){if(r.length<2)continue;x.moveTo(r[0][0],r[0][1]);for(let i=1;i<r.length;i++)x.lineTo(r[i][0],r[i][1])}x.stroke()}}
 // Vågkammar som följer SWAN:s vågriktning: jämnt fördelade linjer som hela tiden ligger tvärs
 // mot vågornas gång. Där vågorna böjer sig (mot grunt vatten, runt uddar och in i lä) böjer sig
