@@ -383,6 +383,11 @@ if __name__ == "__main__":
     except Exception as ex:  # noqa: BLE001
         print(f"Lantmäteriets kustlinje kunde inte tas fram ({ex}), försöker igen nästa körning")
     try:
+        import vind_la
+        with_time_limit(12 * 60, lambda: vind_la.build(10 * 60))
+    except Exception as ex:  # noqa: BLE001
+        print(f"Lä för vinden kunde inte räknas ({ex}), försöker igen nästa körning")
+    try:
         import swan_run
         with_time_limit(28 * 60, lambda: swan_run.build_swan(25 * 60))
     except Exception as ex:  # noqa: BLE001
