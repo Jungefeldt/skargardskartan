@@ -135,9 +135,40 @@ async function drawCoast(){const zz=map.getZoom(),cz=Math.min(MASK_MAX,Math.max(
   // mild utjämning: tar bort trappstegen men behåller uddar och vikar (lite mer när man zoomat förbi maskens upplösning)
   const loops=traceLoops(LAND,W0,H0,zz-cz>=1?2:1);lastCoast={loops,cz,x0,y0};
   // landyta innanför konturen, i sjökortsfärg (inte när vanlig karta är vald)
-  if(S.land!=="karta"){const lc=LANDCOL[S.land];fillLoops(x,loops,h,`rgba(${lc[0]},${lc[1]},${lc[2]},.94)`)}
+  if(S.land!=="karta"){const lc=LANDCOL[S.land];fillLoops(x,loops,h,`rgba(${lc[0]},${lc[1]},${lc[2]},.94)`);
+    // terrängskuggning med skog ovanpå landfärgen, klippt till kustlinjen
+    if(S.terr&&S.layers.contours)drawTerrain(x,loops,h,cz,x0,y0,k)}
   if(S.terr&&S.layers.contours)drawContours(x,cz,x0,y0,k,zz);
   strokeLoops(x,loops,h,"#15191D",1.5*dpr)}
+// Terrängskuggning: markhöjd från Lantmäteriet plus trädhöjd från Skogsstyrelsen, skuggad med ljuset
+// från nordväst som på en terrängkarta. Skog tonas grön och blir upphöjd, så att berg och skogsdungar
+// får djup. Bilden byggs en gång (rader jämnt fördelade i kartans projektion) och skalas sedan.
+let terrImg=null,terrKey=null;
+function terrainImage(){const T=S.terr,tr=S.trees,lc=LANDCOL[S.land];if(!T||!lc)return null;
+  const key=S.land+"|"+(tr?1:0);if(terrKey===key)return terrImg;
+  const nx=T.nx,ny=T.ny,RAD=Math.PI/180,merc=lat=>Math.log(Math.tan(Math.PI/4+lat*RAD/2));
+  const yT=merc(T.lat0),yB=merc(T.lat0-ny*T.dlat);
+  // höjd (mark + träd) i meter, rad för rad i kartans projektion
+  const Z=new Float32Array(nx*ny),C=new Float32Array(nx*ny),G=new Uint8Array(nx*ny);
+  for(let r=0;r<ny;r++){const lat=(2*Math.atan(Math.exp(yT+(r+.5)*(yB-yT)/ny))-Math.PI/2)/RAD,fy=Math.max(0,Math.min(ny-1.001,(T.lat0-lat)/T.dlat-.5)),y0=fy|0,ty=fy-y0;
+    for(let c=0;c<nx;c++){const a=y0*nx+c,b=a+nx,g=T.H[a]*(1-ty)+T.H[b]*ty,tv=tr?(tr[a]*(1-ty)+tr[b]*ty):0,i=r*nx+c;
+      G[i]=g>.5?1:0;C[i]=G[i]?tv:0;Z[i]=g+C[i]}}
+  const dxm=T.dlon*111320*Math.cos((T.lat0-ny*T.dlat/2)*RAD),dym=T.dlat*111320,EX=1.6;
+  const az=315*RAD,el=40*RAD,Lx=Math.cos(el)*Math.sin(az),Ly=Math.cos(el)*Math.cos(az),Lz=Math.sin(el);
+  const FOREST=[150,182,120],cv=document.createElement("canvas");cv.width=nx;cv.height=ny;
+  const g2=cv.getContext("2d"),img=g2.createImageData(nx,ny),d=img.data;
+  for(let r=0;r<ny;r++)for(let c=0;c<nx;c++){const i=r*nx+c;if(!G[i])continue;
+    const zx=(Z[r*nx+Math.min(nx-1,c+1)]-Z[r*nx+Math.max(0,c-1)])/(2*dxm)*EX,zy=(Z[Math.max(0,r-1)*nx+c]-Z[Math.min(ny-1,r+1)*nx+c])/(2*dym)*EX;
+    const nl=Math.hypot(zx,zy,1),sh=Math.max(0,(-zx*Lx-zy*Ly+Lz)/nl)/Lz;          // 1 = plan mark
+    const f=Math.min(1,C[i]/8),v=Math.max(.55,Math.min(1.12,.62+.38*sh));
+    for(let j=0;j<3;j++)d[i*4+j]=Math.min(255,(lc[j]*(1-f)+FOREST[j]*f)*v);d[i*4+3]=240}
+  g2.putImageData(img,0,0);terrImg={cv,yT,yB};terrKey=key;return terrImg}
+function drawTerrain(x,loops,h,cz,x0,y0,k){const T=S.terr,I=terrainImage();if(!I)return;
+  const N=256*Math.pow(2,cz),PX=v=>(v-2)*h,R2=180/Math.PI;
+  const left=((T.lon0+180)/360*N-x0)*k,right=((T.lon0+T.nx*T.dlon+180)/360*N-x0)*k;
+  const top=((.5-I.yT/(2*Math.PI))*N-y0)*k,bot=((.5-I.yB/(2*Math.PI))*N-y0)*k;
+  x.save();x.beginPath();for(const p of loops){x.moveTo(PX(p[0][0]),PX(p[0][1]));for(let i=1;i<p.length;i++)x.lineTo(PX(p[i][0]),PX(p[i][1]));x.closePath()}
+  x.clip("evenodd");x.imageSmoothingEnabled=true;x.drawImage(I.cv,left,top,right-left,bot-top);x.restore()}
 // Höjdkurvor på land ur Lantmäteriets höjdmodell (data/terrang.json, ca 20 m mellan punkterna).
 // Tätare kurvor ju mer man zoomar in; var femte kurva är lite kraftigare.
 let contourCache={key:null,lev:null};
