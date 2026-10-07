@@ -8,8 +8,9 @@ hindret och vinden är nästan tillbaka efter 20 till 30 hinderhöjder.
 
 För varje punkt och vindriktning letas hindren i lovart upp (inom MAX_D meter). Ett hinder med
 höjden h på avståndet d ger dämpningen shelter(d / h); det hinder som skyddar mest avgör.
-Hindrets höjd är markhöjden från Lantmäteriets höjdmodell (data/terrang.json) plus TREE_H
-meter där OpenStreetMap har skog. Varje riktning räknas som ett medel över tre riktningar
+Hindrets höjd är markhöjden från Lantmäteriets höjdmodell (data/terrang.json) plus trädhöjden
+från Skogsstyrelsens laserskanning (data/trad.png, från trad.py). Saknas den räknas TREE_H meter
+där OpenStreetMap har skog. Varje riktning räknas som ett medel över tre riktningar
 (±SPREAD grader), eftersom vinden aldrig är helt jämn i riktning.
 
 Resultat: data/vind/index.json och en bild per riktning, data/vind/d{riktning}.png, där
@@ -27,7 +28,7 @@ import numpy as np
 from common import BOUNDS, DATA
 
 OUT = DATA / "vind"
-VERSION = 1
+VERSION = 2
 DIRS = [round(i * 22.5, 1) for i in range(16)]
 TREE_H = 15.0       # antagen trädhöjd där det är skog (m)
 MAX_D = 2000.0      # längsta avstånd till ett hinder som räknas (m)
@@ -106,6 +107,18 @@ def factor(Hgt, wd, dxm, dym):
     return acc / len(SPREAD)
 
 
+def tree_grid(T):
+    """Trädhöjd i meter från Skogsstyrelsen i höjdmodellens rutnät, eller None om den saknas."""
+    from PIL import Image
+    try:
+        meta = json.loads((DATA / "trad.json").read_text())
+        if (meta["nx"], meta["ny"], meta["lat0"], meta["lon0"]) != (T["nx"], T["ny"], T["lat0"], T["lon0"]):
+            return None
+        return np.array(Image.open(DATA / "trad.png")).astype(np.float32) / meta.get("per_m", 4)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def build(budget_s=10 * 60):
     from PIL import Image
     t_end = time.time() + budget_s
@@ -114,24 +127,33 @@ def build(budget_s=10 * 60):
         log("Lä för vinden: höjdmodellen saknas ännu (kommer från Lantmäteriet), väntar")
         return
     T = json.loads(tp.read_text())
+    trees = tree_grid(T)
+    tsrc = "Skogsstyrelsen" if trees is not None else "OpenStreetMap"
+    done = []
     try:
         idx = json.loads((OUT / "index.json").read_text())
         if idx.get("version") == VERSION and idx.get("bounds") == BOUNDS and idx.get("terrain") == T.get("source") \
-                and len(idx.get("done", [])) == len(DIRS):
-            return
+                and idx.get("trees") == tsrc:
+            if len(idx.get("done", [])) == len(DIRS):
+                return
+            done = list(idx.get("done", []))           # fortsätt där förra körningen slutade
     except Exception:  # noqa: BLE001
         pass
-    log("Lä för vinden: räknar ...")
+    log(f"Lä för vinden: räknar med skog från {tsrc}, {len(done)} riktningar klara sedan tidigare ...")
     h = np.frombuffer(base64.b64decode(T["h"]), dtype=np.uint8).reshape(T["ny"], T["nx"]).astype(np.float32)
-    forest = forest_grid(T)
     land = h > 0.5
-    Hgt = np.where(land & forest, h + TREE_H, h).astype(np.float32)
+    if trees is not None:
+        Hgt = np.where(land, h + trees, h).astype(np.float32)
+    else:
+        forest = forest_grid(T)
+        Hgt = np.where(land & forest, h + TREE_H, h).astype(np.float32)
     lat_mid = T["lat0"] - T["ny"] * T["dlat"] / 2
     dxm = T["dlon"] * 111320 * math.cos(math.radians(lat_mid))
     dym = T["dlat"] * 111320
     OUT.mkdir(parents=True, exist_ok=True)
-    done = []
     for wd in DIRS:
+        if f"d{int(round(wd * 10)):04d}" in done:
+            continue
         if time.time() > t_end:
             log("  tiden slut, fortsätter nästa körning")
             break
@@ -142,7 +164,7 @@ def build(budget_s=10 * 60):
         log(f"  {name}: medelfaktor på vattnet {F[~land].mean():.2f}, lägst {F[~land].min():.2f}")
     idx = {"version": VERSION, "bounds": BOUNDS, "terrain": T.get("source"), "lon0": T["lon0"], "lat0": T["lat0"],
            "dlon": T["dlon"], "dlat": T["dlat"], "nx": T["nx"], "ny": T["ny"], "dirs": DIRS, "scale": SCALE,
-           "done": done, "tree_h": TREE_H,
+           "done": done, "trees": tsrc, "tree_h": TREE_H,
            "model": "lä bakom hinder: faktor 0,45 inom 3 hinderhöjder, sedan 1 - 0,55 exp(-(s-3)/7)"}
     (OUT / "index.json").write_text(json.dumps(idx, separators=(",", ":")))
     log(f"Lä för vinden: {len(done)} av {len(DIRS)} riktningar klara")
