@@ -13,7 +13,18 @@ L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribu
 // sjömärken ligger ovanpå alla färgade lager (men under namn och etiketter), så att de alltid syns
 map.createPane("seamarks").style.zIndex=380; map.getPane("seamarks").style.pointerEvents="none";
 L.tileLayer("https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png",{pane:"seamarks",maxZoom:18,attribution:"Sjömärken © OpenSeaMap · SMHI · Copernicus Marine · EMODnet"}).addTo(map);
-L.control.scale({imperial:false,position:"topleft"}).addTo(map);
+// Linjal: randig skala med jämna avstånd, som på ett sjökort
+(()=>{const st=document.createElement("style");st.textContent=`.ruler{margin:calc(110px + env(safe-area-inset-top,0px)) 0 0 10px!important;padding:5px 8px 4px;background:rgba(255,255,255,.88);border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.25);font:600 11px/1 system-ui,-apple-system,Segoe UI,sans-serif;color:#14222B;pointer-events:none}
+.ruler .rb{display:flex;height:6px;border:1.5px solid #14222B;box-sizing:content-box}.ruler .rb i{flex:1;background:#14222B}.ruler .rb i:nth-child(even){background:#fff}
+.ruler .rl{position:relative;height:13px;margin-top:3px}.ruler .rl span{position:absolute;transform:translateX(-50%);white-space:nowrap}.ruler .rl span:first-child{transform:none}.ruler .rl span:last-child{transform:translateX(-100%)}`;document.head.appendChild(st)})();
+const Ruler=L.Control.extend({options:{position:"topleft"},
+  onAdd(){const d=L.DomUtil.create("div","ruler");this._d=d;map.on("zoomend moveend resize",this._u,this);setTimeout(()=>this._u(),0);return d},
+  _u(){const sz=map.getSize(),y=sz.y/2,maxPx=Math.max(80,Math.min(240,sz.x*.42));
+    const m=map.distance(map.containerPointToLatLng([10,y]),map.containerPointToLatLng([10+maxPx,y]));
+    const p=Math.pow(10,Math.floor(Math.log10(m)));let n=p,segs=5;for(const [f,s] of [[1,5],[2,4],[2.5,5],[5,5]])if(f*p<=m){n=f*p;segs=s}
+    const px=Math.round(maxPx*n/m),fmt=v=>v>=1000?(String(Math.round(v/10)/100).replace(".",","))+" km":Math.round(v)+" m";
+    this._d.innerHTML=`<div class="rb" style="width:${px}px">${"<i></i>".repeat(segs)}</div><div class="rl" style="width:${px}px"><span style="left:0">0</span>${px>=150?`<span style="left:50%">${n>=1000?String(Math.round(n/20)/100).replace(".",","):Math.round(n/2)}</span>`:""}<span style="left:100%">${fmt(n)}</span></div>`}});
+new Ruler().addTo(map);
 map.createPane("tint").style.zIndex=300; map.getPane("tint").style.pointerEvents="none"; map.getPane("tint").style.mixBlendMode="color";
 map.createPane("zones").style.zIndex=345; map.getPane("zones").style.pointerEvents="none";
 map.createPane("crests").style.zIndex=346; map.getPane("crests").style.pointerEvents="none";
@@ -424,7 +435,11 @@ const WCOMP=(()=>{let s=12345;const rnd=()=>{s=(s*1103515245+12345)%2147483648;r
   const n=Math.sqrt(sum);return out.map(c=>[c[0],c[1],c[2]/n,c[3]])})();
 const WG={ok:null,gl:null,canvas:null,prog:null,u:{},tex:{},name:null,raf:0,t0:performance.now(),st:null,tAcc:0,last:0};
 // tempo i animationen efter zoom: snabbare inzoomat, långsammare utzoomat (zoom 13 = normalt)
-const animRate=()=>Math.pow(1.5,map.getZoom()-13);
+// Taket är verklig takt: vågperioden i animationen blir aldrig kortare än riktiga vågors period
+// vid den aktuella vinden (JONSWAP, ca 4 km vindsträcka). Utzoomat går vågorna långsammare.
+let rateCap=1;
+const animRate=()=>Math.min(rateCap,Math.pow(1.5,map.getZoom()-13));
+function setRateCap(U,uS){U=Math.max(2,U||10);const Treal=0.286*Math.cbrt(9.81*4000/(U*U))*U/9.81,Tvis=1/(F0*Math.sqrt(1.6*uS));rateCap=Math.max(.3,Math.min(1.2,Tvis/Treal))}
 const VS="attribute vec2 a;varying vec2 v;void main(){v=vec2(a.x*.5+.5,.5-a.y*.5);gl_Position=vec4(a,0.,1.);}";
 const FS=`precision highp float;
 varying vec2 v;
@@ -530,7 +545,8 @@ async function reliefShow(R,cx0,cy0,W0,H0,k,mz,Hc,wd,U){const name=fasName(wd),i
     hw[i*4]=Math.min(255,Math.round(Math.max(0,Hc[j])*200));hw[i*4+1]=R.water[j]?255:0;hw[i*4+2]=Math.min(255,Math.round(Math.max(0,LD[i]-.5)*mpz*2));hw[i*4+3]=255}
   glTex(2,hw,true,W0,H0);
   // vindstyrkan avgör hur långa vågorna är: vid 10 m/s som fasfälten, kortare i svagare vind
-  gl.uniform1f(WG.u.uS,Math.max(.75,Math.min(4,10/Math.max(1,U||10))));gl.uniform2f(WG.u.uTx,1/W0,1/H0);
+  const uS=Math.max(.75,Math.min(4,10/Math.max(1,U||10)));setRateCap(U,uS);
+  gl.uniform1f(WG.u.uS,uS);gl.uniform2f(WG.u.uTx,1/W0,1/H0);
   const nw=CRS.pointToLatLng(L.point(px0,py0),mz),se=CRS.pointToLatLng(L.point(px0+W0,py0+H0),mz),r=X.range[name],lat=(nw.lat+se.lat)/2;
   gl.uniform4f(WG.u.uPR,r[0],r[1],r[2],r[3]);gl.uniform4f(WG.u.uGeo,nw.lng,se.lng,nw.lat,se.lat);
   gl.uniform4f(WG.u.uGrid,X.lon0,X.lat0,X.dlon,X.dlat);gl.uniform2f(WG.u.uN,X.nx,X.ny);
@@ -696,7 +712,7 @@ function drawContours(x,cz,x0,y0,k,zz){const T=S.terr;if(zz<12)return;const step
     x.stroke()}}
 // Ytor som täcks av tidsraden, knapparna och panelen, så att inga etiketter hamnar under dem.
 function uiBoxes(){const m=$("map").getBoundingClientRect(),out=[];
-  document.querySelectorAll(".bar,.side,.panel:not(.hidden),.sheet.open,.leaflet-control-scale,.leaflet-control-attribution").forEach(el=>{const r=el.getBoundingClientRect();if(r.width&&r.height)out.push([r.left-m.left,r.top-m.top,r.right-m.left,r.bottom-m.top])});return out}
+  document.querySelectorAll(".bar,.side,.panel:not(.hidden),.sheet.open,.ruler,.leaflet-control-attribution").forEach(el=>{const r=el.getBoundingClientRect();if(r.width&&r.height)out.push([r.left-m.left,r.top-m.top,r.right-m.left,r.bottom-m.top])});return out}
 // Lägger ut etiketter i prioritetsordning och hoppar över allt som skulle krocka.
 function placeNames(){nameLayer.clearLayers();const boxes=uiBoxes();if(S.layers.names!==false)placeLabels(boxes,nameCands(),nameLayer,"names");return boxes}
 function placeLabels(boxes,cands,layer,pane){cands.sort((a,b)=>b.score-a.score);const sz=map.getSize();
