@@ -9,7 +9,12 @@ let toastT; function toast(s){const t=$("toast");t.textContent=s;t.classList.add
 // startar inzoomad över Trälhavet (Lervik, Oranjeholmen och Stora Älgö), så att det går snabbt att se läget
 const map = L.map("map",{zoomControl:false,minZoom:8,maxZoom:17,center:[59.447,18.392],zoom:13});
 map.attributionControl.setPrefix(false);
-L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(map);
+// OpenStreetMap visas bara när ”Karta” är valt; annars syns endast appens egna färger (vatten som bakgrund),
+// så att det aldrig blinkar till en annan karta när man flyttar sig eller när något laddar
+const osm=L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19});
+map.attributionControl.addAttribution("© OpenStreetMap");
+function syncBase(){const karta=S.land==="karta";if(karta&&!map.hasLayer(osm))osm.addTo(map);if(!karta&&map.hasLayer(osm))map.removeLayer(osm);
+  map.getContainer().style.background=karta?"#ddd":"#AAD3DF"}
 // sjömärken ligger ovanpå alla färgade lager (men under namn och etiketter), så att de alltid syns
 map.createPane("seamarks").style.zIndex=380; map.getPane("seamarks").style.pointerEvents="none";
 L.tileLayer("https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png",{pane:"seamarks",maxZoom:18,attribution:"Sjömärken © OpenSeaMap · SMHI · Copernicus Marine · EMODnet"}).addTo(map);
@@ -448,6 +453,10 @@ uniform vec4 uPR,uGeo,uGrid,uC[${NCOMP}],uD[${NCOMP}];
 uniform vec2 uN,uM;
 uniform float uT,uPx,uEx,uS;
 uniform vec2 uTx;
+float hash(vec2 p){p=mod(p,997.);return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+float vnoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
+  return mix(mix(hash(i),hash(i+vec2(1.,0.)),f.x),mix(hash(i+vec2(0.,1.)),hash(i+vec2(1.,1.)),f.x),f.y);}
+float lace(vec2 p){return .55*vnoise(p)+.3*vnoise(p*2.3+7.1)+.15*vnoise(p*5.1+3.7);}   // oregelbunden skumstruktur
 float dec(sampler2D s,vec2 ij){vec4 c=texture2D(s,(ij+.5)/uN);return(c.r*65280.+c.g*255.)/65535.;}
 float fld(sampler2D s,vec2 g){vec2 p=g-.5,i=floor(p),f=p-i;
   return mix(mix(dec(s,i),dec(s,i+vec2(1.,0.)),f.x),mix(dec(s,i+vec2(0.,1.)),dec(s,i+vec2(1.,1.)),f.x),f.y);}
@@ -473,7 +482,8 @@ void main(){
     gr-=A*uS*sin(a)*(c.x*gP+c.y*gQ);eta+=A*cos(a);}
   // nära land dör vågorna ut
   float D0=25.+60.*H,near=1.-smoothstep(0.,D0,dist);
-  gr*=H*uEx*(1.-.75*near);
+  // brantare toppar och flackare dalar, som hos riktiga vindvågor: ger skarpare kanter
+  gr*=H*uEx*(1.-.75*near)*(1.+1.3*clamp(eta,0.,1.2));
   vec3 n=normalize(vec3(-gr,1.));
   vec2 tr=gP/max(length(gP),1e-6);float e=.61;                      // ljuset 35 grader upp, från dit vågorna går
   float lit=max(dot(n,vec3(tr*cos(e),sin(e))),0.)/sin(e);
@@ -481,15 +491,23 @@ void main(){
   float rel=(1.-soft)*lit+soft*pow(n.z,4.);
   rel=mix(1.,rel,smoothstep(.02,.4,H));                               // låg sjö: bara svaga krusningar
   vec3 base=mix(vec3(.667,.827,.875),vec3(.463,.659,.776),clamp(H/.45,0.,1.));
-  vec3 col=base*(.42+.58*clamp(rel,0.,1.6))+.22*clamp(rel-1.,0.,1.);
-  // bränningar: där vågorna går mot en strand bryter kammarna i vitt skum
+  rel=rel<1.?pow(rel,1.6):rel;                                        // mörkare skuggsidor, tydligare kant mot den ljusa sidan
+  vec3 col=base*(.38+.62*clamp(rel,0.,1.6))+.26*clamp(rel-1.,0.,1.);
+  // Skum: (1) bränningar där kammarna slår mot en exponerad strand, (2) en sköljzon längs strandkanten
+  // som pulserar när vågorna sköljer upp, (3) vita gäss på de högsta kammarna i grov sjö.
+  // Skummet har en oregelbunden struktur som följer med vågorna.
   float expo=length(gd)>.002?clamp(dot(tr,-normalize(gd)),0.,1.):0.;
   float h=smoothstep(.08,.35,H);
-  float crest=smoothstep(.05,.7,eta);
-  float streak=.6+.4*sin(uS*(23.*P+11.*Q)+uT*.9)*sin(uS*(-9.*P+27.*Q)-uT*.6);
-  float zone=1.-smoothstep(0.,15.+45.*H,dist),swash=1.-smoothstep(0.,10.+25.*H,dist);
-  float foam=expo*h*(1.4*zone*crest*streak+swash*(.6+.4*crest));
-  col=mix(col,vec3(.97,.98,.98),clamp(foam,0.,.95));
+  float crest=smoothstep(.0,.6,eta);
+  float zone=1.-smoothstep(0.,20.+55.*H,dist),swash=1.-smoothstep(0.,10.+28.*H,dist);
+  float shore=expo*h*zone,wcp=smoothstep(.3,.65,H)*smoothstep(.5,.9,eta)*(1.-near);
+  if(shore>.01||wcp>.01){                                              // strukturen räknas bara där det kan bli skum
+    vec2 fp=vec2(uS*P*5.-uT*.5,uS*Q*5.);
+    float l1=lace(fp),l2=lace(fp*2.1+3.3);
+    float brk=shore*(1.3*crest*smoothstep(.3,.55,l1)+.6*smoothstep(.5,.7,l2));
+    float sw=expo*h*swash*(.55+.45*sin(uT*1.7+uS*P*6.283))*smoothstep(.3,.55,l1);
+    float foam=clamp(brk+sw+1.2*wcp*smoothstep(.45,.65,l2),0.,.95);
+    col=mix(col,vec3(.97,.985,.99)*(.93+.07*clamp(lit,0.,1.)),foam);}
   gl_FragColor=vec4(col,clamp(hw.g*1.5,0.,1.));}`;
 function glInit(canvas){try{
   const gl=canvas.getContext("webgl",{premultipliedAlpha:false,antialias:false,alpha:true});if(!gl)return false;
@@ -679,7 +697,7 @@ function drawZones(R,vx0,vy0,vx1,vy1,mz,Z){const mg=4,cx0=Math.max(0,vx0-R.px0-m
   else{crestSet=null;hideCanvas("crests")}
   if(!relief)reliefHide()}
 let MASK_MAX=13,lastCoast=null;
-async function drawCoast(){const zz=map.getZoom(),cz=Math.min(MASK_MAX,Math.max(11,zz)),bnd=map.getBounds().pad(.04),
+async function drawCoast(){const zz=map.getZoom(),cz=Math.min(MASK_MAX,Math.max(11,zz)),bnd=map.getBounds().pad(.3),
   nw=CRS.latLngToPoint(bnd.getNorthWest(),cz),se=CRS.latLngToPoint(bnd.getSouthEast(),cz),x0=Math.floor(nw.x),y0=Math.floor(nw.y),W0=Math.ceil(se.x)-x0,H0=Math.ceil(se.y)-y0;
   const R=await region(cz,x0,y0,W0,H0),dpr=window.devicePixelRatio||1;
   let k=Math.pow(2,zz-cz)*dpr;k=Math.min(k,4096/W0,4096/H0);const h=k/2;
@@ -786,8 +804,9 @@ $("dmin").oninput=e=>{S.find.dmin=Math.min(+e.target.value,S.find.dmax);syncDept
 $("dmax").oninput=e=>{S.find.dmax=Math.max(+e.target.value,S.find.dmin);syncDepth();schedule()};syncDepth();
 $("tmin").oninput=e=>{S.find.tmin=Math.min(+e.target.value,S.find.tmax);syncFind();schedule()};
 $("tmax").oninput=e=>{S.find.tmax=Math.max(+e.target.value,S.find.tmin);syncFind();schedule()};
-document.querySelectorAll("[data-land]").forEach(b=>b.onclick=()=>{S.land=b.dataset.land;document.querySelectorAll("[data-land]").forEach(x=>x.setAttribute("aria-checked",x===b));try{localStorage.setItem("land",S.land)}catch(_){}schedule()});
+document.querySelectorAll("[data-land]").forEach(b=>b.onclick=()=>{S.land=b.dataset.land;syncBase();document.querySelectorAll("[data-land]").forEach(x=>x.setAttribute("aria-checked",x===b));try{localStorage.setItem("land",S.land)}catch(_){}schedule()});
 try{const sv=localStorage.getItem("land");if(sv&&LANDCOL[sv]!==undefined||sv==="karta"){S.land=sv;document.querySelectorAll("[data-land]").forEach(x=>x.setAttribute("aria-checked",x.dataset.land===sv))}}catch(_){}
+syncBase();
 document.querySelectorAll("[data-wstyle]").forEach(b=>b.onclick=()=>{S.wstyle=b.dataset.wstyle;document.querySelectorAll("[data-wstyle]").forEach(x=>x.setAttribute("aria-checked",x===b));try{localStorage.setItem("wstyle",S.wstyle)}catch(_){}schedule()});
 try{const sw=localStorage.getItem("wstyle");if(sw==="farg"||sw==="monster"||sw==="rorlig"){S.wstyle=sw;document.querySelectorAll("[data-wstyle]").forEach(x=>x.setAttribute("aria-checked",x.dataset.wstyle===sw))}}catch(_){}
 document.querySelectorAll("[data-basis]").forEach(b=>b.onclick=()=>{S.basis=b.dataset.basis;document.querySelectorAll("[data-basis]").forEach(x=>x.setAttribute("aria-checked",x===b));try{localStorage.setItem("basis",S.basis)}catch(_){}schedule()});
@@ -796,7 +815,7 @@ $("explain").onclick=()=>{let h=`<h3>Färger för lä och sjögång</h3><p class
     <table class="deftab"><tr><th>Klass</th><th>Våg</th><th>Så känns det</th></tr>`+LA_CLASSES.map((c,i)=>`<tr><td><i style="background:${c[2]}"></i>${c[1]}</td><td>${LA_DEF[i][0]}</td><td>${LA_DEF[i][1]}</td></tr>`).join("")+`</table>
     <h3>Räkna på byar eller medelvind</h3><p class="note" style="margin-top:2px"><b>Byar</b> (förvalt) räknar vågorna på den starkaste vinden i prognosen. Det ger en försiktig bild, bra när du ska ligga still och fiska. <b>Medelvind</b> stämmer bättre med hur vågorna oftast blir, men underskattar läget när det är byigt.</p>
     <h3>Vindstyrka (SMHI)</h3><table class="deftab"><tr><th>Benämning</th><th>m/s</th></tr><tr><td>Lugnt</td><td>0–0,2</td></tr><tr><td>Svag vind</td><td>0,3–3</td></tr><tr><td>Måttlig vind</td><td>4–7</td></tr><tr><td>Frisk vind</td><td>8–13</td></tr><tr><td>Hård vind</td><td>14–19</td></tr><tr><td>Mycket hård vind</td><td>20–24</td></tr><tr><td>Storm</td><td>25–32</td></tr></table>
-    <h3>Vågmönster</h3><p class="note" style="margin-top:2px">Varje linje är en vågkam och ligger tvärs mot vågornas gång. Där det finns beräkningar från vågmodellen SWAN (TU Delft) följer linjerna modellens vågriktning, som tar hänsyn till lä bakom öar, refraktion mot grunt vatten och diffraktion runt uddar. Tätare och tunnare linjer betyder mindre vågor, glesare och kraftigare linjer större vågor. <b>Rörliga vågor</b> visar i stället vågytan i relief, med ljuset från det håll vågorna går mot: framsidorna är ljusa och baksidorna skuggade. Vågornas höjd är kraftigt överdriven och avståndet mellan dem förstorat, så att de syns i kartskala.</p>
+    <h3>Vågmönster</h3><p class="note" style="margin-top:2px">Varje linje är en vågkam och ligger tvärs mot vågornas gång. Där det finns beräkningar från vågmodellen SWAN (TU Delft) följer linjerna modellens vågriktning, som tar hänsyn till lä bakom öar, refraktion mot grunt vatten och diffraktion runt uddar. Tätare och tunnare linjer betyder mindre vågor, glesare och kraftigare linjer större vågor. <b>Rörliga vågor</b> visar i stället vågytan i relief, med ljuset från det håll vågorna går mot: framsidorna är ljusa och baksidorna skuggade. Vitt skum syns där vågorna bryter mot en strand som de går rakt mot, som en sköljzon längs strandkanten, och som vita gäss på de högsta kammarna när sjön är grov. Vågornas höjd är kraftigt överdriven och avståndet mellan dem förstorat, så att de syns i kartskala.</p>
     <h3>Lä för vinden</h3><p class="note" style="margin-top:2px">Bakom öar, uddar och skog är vinden svagare. Dämpningen räknas från markhöjden i Lantmäteriets höjdmodell och skogen i OpenStreetMap (räknad som 15 m hög): störst närmast hindret, och vinden är nästan tillbaka efter 20 till 30 gånger hindrets höjd. Uppskruvad vind runt uddar och i smala sund ingår inte.</p>
     <h3>Höjdkurvor</h3><p class="note" style="margin-top:2px">Höjdkurvorna på land kommer från Lantmäteriets laserskannade höjdmodell. Avståndet mellan kurvorna är 10 m, och 5 m när man zoomat in; var femte kurva är kraftigare.</p>
     <h3>Djup</h3><p class="note" style="margin-top:2px">Djupzonerna kommer från EMODnet Bathymetry (DTM 2024). I svenska vatten är underlaget medvetet glesat av sekretesskäl, så djupen är ungefärliga: bra för att skilja grunda vikar från djupa fjärdar, men enskilda grund, kanter och smala sund syns inte. "Nära lodning" betyder att det finns en verklig mätning i närheten, "uppskattat" att djupet är uträknat från omgivningen.</p>
