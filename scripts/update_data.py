@@ -3,8 +3,10 @@
 update_data.py
 
 Hämtar ny data till Skärgårdskartan:
-  data/wind.json  vind och väder från SMHI (prognos), senaste 5 dagarna sparas
-  data/temp.json  vattentemperatur från Copernicus Marine, 5 dagar bakåt plus prognos
+  data/wind.json  vind och väder: met.no (nordiska modellen MEPS, 2,5 km) de första dygnen,
+                  SMHI för resten och som reserv; senaste 5 dagarna sparas
+  data/temp.json  vattentemperatur från Copernicus Marine: havsmodellen, rättad mot satellitmätt
+                  yttemperatur (ca 2 km) där sådan finns, 5 dagar bakåt plus prognos
 
 Copernicus-inloggning läses från miljövariablerna
 COPERNICUSMARINE_SERVICE_USERNAME och COPERNICUSMARINE_SERVICE_PASSWORD.
@@ -20,7 +22,10 @@ import urllib.request
 from common import BOUNDS, DATA, DAYS_BACK
 
 SMHI = "https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/{lon}/lat/{lat}/data.json"
+MET = "https://api.met.no/weatherapi/locationforecast/2.0/complete?lat={lat}&lon={lon}"
+UA = "skargardskartan/1.0 github.com/Jungefeldt/skargardskartan"
 LAT_STEP, LON_STEP = 0.10, 0.15  # punkternas täthet (ca 11 x 8 km)
+SST_DATASET = "DMI-BALTIC-SST-L4-NRT-OBS_FULL_TIME_SERIE"   # satellitmätt yttemperatur, ca 2 km
 WIND_BUDGET_S = 6 * 60   # längsta tid för vindhämtningen
 TEMP_BUDGET_S = 8 * 60   # längsta tid för vattentemperaturen
 FRESH_H = 6              # manuella körningar hoppar över hämtningen om datan är yngre än så
@@ -72,10 +77,29 @@ def fetch_point(lat, lon):
     return out
 
 
+def fetch_point_met(lat, lon):
+    """Prognos från met.no (Locationforecast, bygger på den nordiska modellen MEPS med 2,5 km
+    upplösning de första dygnen). Samma nycklar som SMHI; vädersymbolen tas från SMHI."""
+    url = MET.format(lat=f"{lat:.4f}", lon=f"{lon:.4f}")
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        js = json.loads(r.read().decode("utf-8"))
+    out = {}
+    for step in js.get("properties", {}).get("timeseries", []):
+        t = step.get("time")
+        d = (step.get("data") or {}).get("instant", {}).get("details", {})
+        if not t or d.get("wind_speed") is None:
+            continue
+        nh = (step.get("data") or {}).get("next_1_hours") or {}
+        out[t[:13] + ":00Z"] = {"t": d.get("air_temperature"), "ws": d.get("wind_speed"), "wd": d.get("wind_from_direction"),
+                                "gust": d.get("wind_speed_of_gust"), "pr": (nh.get("details") or {}).get("precipitation_amount")}
+    return out
+
+
 def update_wind():
     w, s, e, n = BOUNDS
-    # i ett litet område tätare punkter, så att det blir några vindpilar att se
-    lat_step, lon_step = min(LAT_STEP, (n - s) / 4), min(LON_STEP, (e - w) / 4)
+    # i ett litet område tätare punkter (met.no räknar med 2,5 km rutor), så att vinden följer fjärdarna
+    lat_step, lon_step = min(LAT_STEP, (n - s) / 6), min(LON_STEP, (e - w) / 6)
     pts = []
     lat = s + lat_step / 2
     while lat < n:
@@ -98,7 +122,7 @@ def update_wind():
 
     keep_from = (utcnow() - dt.timedelta(days=DAYS_BACK)).strftime("%Y-%m-%dT%H:00Z")
     series = {}
-    ok = 0
+    ok = met_ok = 0
     t_end = time.time() + WIND_BUDGET_S
     for la, lo in pts:
         merged = {t: v for t, v in old.get((la, lo), {}).items() if t >= keep_from}
@@ -110,9 +134,20 @@ def update_wind():
             merged.update(fetch_point(la, lo))
             ok += 1
         except Exception as ex:  # noqa: BLE001
-            print(f"  {la},{lo}: {ex}")
+            print(f"  SMHI {la},{lo}: {ex}")
+        # met.no ovanpå SMHI där den finns; vädersymbolen behålls från SMHI
+        try:
+            for t, v in fetch_point_met(la, lo).items():
+                cur = dict(merged.get(t) or {})
+                cur.update({k: x for k, x in v.items() if x is not None})
+                merged[t] = cur
+            met_ok += 1
+        except Exception as ex:  # noqa: BLE001
+            print(f"  met.no {la},{lo}: {ex}")
         series[(la, lo)] = merged
         time.sleep(0.15)
+    ok += met_ok
+    print(f"  met.no svarade för {met_ok} av {len(pts)} punkter", flush=True)
     if not ok:
         print("SMHI svarade inte, behåller gammal vinddata")
         return
@@ -175,6 +210,14 @@ def update_temp():
     lat = da[latn].values.astype(float)
     lon = da[lonn].values.astype(float)
     v = da.transpose("time", latn, lonn).values.astype(float)
+    dates = [str(t)[:10] for t in da["time"].values]
+    src = "Copernicus Marine, havsmodell"
+    try:
+        v, nsat = blend_satellite(cm, kw, v, lat, lon, dates, start, today)
+        if nsat:
+            src = f"Copernicus Marine, havsmodell rättad mot satellit ({nsat} dagar)"
+    except Exception as ex:  # noqa: BLE001
+        print(f"  satellittemperatur kunde inte hämtas ({str(ex).splitlines()[0][:160]}), använder bara modellen")
 
     # fyll rutor utan värde (land, trånga vikar) från grannarna
     wet = np.isfinite(v).all(axis=0)
@@ -201,11 +244,52 @@ def update_temp():
         "lat0": float(lat[0]), "lon0": float(lon[0]),
         "dlat": float(np.median(np.diff(lat))), "dlon": float(np.median(np.diff(lon))),
         "ny": int(len(lat)), "nx": int(len(lon)),
-        "dates": [str(t)[:10] for t in da["time"].values],
+        "dates": dates,
+        "source": src,
         "t": base64.b64encode(q.tobytes()).decode("ascii"),
     }
     (DATA / "temp.json").write_text(json.dumps(out, separators=(",", ":")))
     print(f"  vattentemperatur sparad: {len(out['dates'])} dagar", flush=True)
+
+
+def blend_satellite(cm, kw, v, lat, lon, dates, start, today):
+    """Rättar havsmodellens yttemperatur mot satellitmätt yttemperatur (Copernicus, DMI, ca 2 km).
+    Dagar med satellitdata får satellitens värde där det finns; prognosdagarna efter får skillnaden
+    mellan satellit och modell från sista satellitdagen, avtagande med 15 % per dag."""
+    import numpy as np
+    sat = cm.open_dataset(dataset_id=SST_DATASET, variables=["analysed_sst"],
+                          minimum_longitude=float(lon.min()) - 0.05, maximum_longitude=float(lon.max()) + 0.05,
+                          minimum_latitude=float(lat.min()) - 0.05, maximum_latitude=float(lat.max()) + 0.05,
+                          start_datetime=f"{start}T00:00:00", end_datetime=f"{today}T23:59:59", **kw)
+    if sat is None:
+        return v, 0
+    s = sat["analysed_sst"]
+    sl = "latitude" if "latitude" in s.coords else "lat"
+    so = "longitude" if "longitude" in s.coords else "lon"
+    s = s.sortby(sl).sortby(so).load()
+    slat, slon = s[sl].values.astype(float), s[so].values.astype(float)
+    sv = s.transpose("time", sl, so).values.astype(float)
+    if np.nanmean(sv) > 100:
+        sv = sv - 273.15                                  # kelvin till grader
+    iy = np.abs(slat[:, None] - lat[None, :]).argmin(axis=0)
+    ix = np.abs(slon[:, None] - lon[None, :]).argmin(axis=0)
+    sdates = [str(t)[:10] for t in s["time"].values]
+    v = v.copy()
+    last, diff, n = None, None, 0
+    for k, d in enumerate(dates):
+        if d in sdates:
+            g = sv[sdates.index(d)][np.ix_(iy, ix)]
+            ok = np.isfinite(g) & np.isfinite(v[k])
+            if ok.sum() > 0:
+                diff = np.where(ok, g - v[k], np.nan)
+                v[k] = np.where(ok, g, v[k])
+                last, n = k, n + 1
+        elif last is not None and k > last and diff is not None:
+            mean = np.nanmean(diff)
+            dd = np.where(np.isfinite(diff), diff, mean)
+            v[k] = v[k] + dd * 0.85 ** (k - last)
+    print(f"  satellittemperatur: {n} dagar, medelskillnad mot modellen {np.nanmean(diff) if diff is not None else 0:+.1f} grader", flush=True)
+    return v, n
 
 
 def ensure_names():
@@ -382,6 +466,11 @@ if __name__ == "__main__":
         with_time_limit(18 * 60, lambda: lm_coast.build(15 * 60))
     except Exception as ex:  # noqa: BLE001
         print(f"Lantmäteriets kustlinje kunde inte tas fram ({ex}), försöker igen nästa körning")
+    try:
+        import trad
+        with_time_limit(10 * 60, lambda: trad.build(8 * 60))
+    except Exception as ex:  # noqa: BLE001
+        print(f"Trädhöjd kunde inte hämtas ({ex}), läet räknas med skog från OpenStreetMap")
     try:
         import vind_la
         with_time_limit(12 * 60, lambda: vind_la.build(10 * 60))
