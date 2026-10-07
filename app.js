@@ -482,6 +482,9 @@ void main(){
     gr-=A*uS*sin(a)*(c.x*gP+c.y*gQ);eta+=A*cos(a);}
   // nära land dör vågorna ut
   float D0=25.+60.*H,near=1.-smoothstep(0.,D0,dist);
+  // konturlinje runt varje vågtopp: avståndet till nivån eta=0,35 i pixlar, så att linjen alltid är ungefär en pixel bred
+  float inkPx=abs(eta-.35)/max(length(gr),1e-6)/uPx;
+  float ink=(1.-smoothstep(.45,1.3,inkPx))*smoothstep(.06,.3,H)*(1.-near);
   // brantare toppar och flackare dalar, som hos riktiga vindvågor: ger skarpare kanter
   gr*=H*uEx*(1.-.75*near)*(1.+1.3*clamp(eta,0.,1.2));
   vec3 n=normalize(vec3(-gr,1.));
@@ -493,6 +496,7 @@ void main(){
   vec3 base=mix(vec3(.667,.827,.875),vec3(.463,.659,.776),clamp(H/.45,0.,1.));
   rel=rel<1.?pow(rel,1.6):rel;                                        // mörkare skuggsidor, tydligare kant mot den ljusa sidan
   vec3 col=base*(.38+.62*clamp(rel,0.,1.6))+.26*clamp(rel-1.,0.,1.);
+  col=mix(col,vec3(.07,.15,.23),ink*.65);                             // konturlinjen
   // Skum: (1) bränningar där kammarna slår mot en exponerad strand, (2) en sköljzon längs strandkanten
   // som pulserar när vågorna sköljer upp, (3) vita gäss på de högsta kammarna i grov sjö.
   // Skummet har en oregelbunden struktur som följer med vågorna.
