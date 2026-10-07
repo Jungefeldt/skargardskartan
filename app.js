@@ -400,7 +400,9 @@ function drawCrestSet(frac){const A=crestSet;if(!A)return;const x=A.x;x.clearRec
   for(const b of A.buckets){x.lineWidth=b.w;x.strokeStyle=b.c;x.beginPath();
     for(const r of b.runs){x.moveTo(r[0]+frac*r[2],r[1]+frac*r[3]);for(let i=4;i<r.length;i+=4)x.lineTo(r[i]+frac*r[i+2],r[i+1]+frac*r[i+3])}x.stroke()}
   A.clip(x)}
-function animLoop(ts){if(!animOn||!crestSet){animRAF=0;return}drawCrestSet(((ts-animT0)%WAVE_PERIOD_MS)/WAVE_PERIOD_MS);animRAF=requestAnimationFrame(animLoop)}
+let animPh=0,animLast=0;
+function animLoop(ts){if(!animOn||!crestSet){animRAF=0;animLast=0;return}if(animLast)animPh=(animPh+Math.min(100,ts-animLast)*animRate()/WAVE_PERIOD_MS)%1;animLast=ts;
+  drawCrestSet(animPh);animRAF=requestAnimationFrame(animLoop)}
 function startAnim(){animOn=S.wstyle==="rorlig";if(!animOn&&animRAF){cancelAnimationFrame(animRAF);animRAF=0}
   if(animOn&&crestSet&&!animRAF){animT0=performance.now();animRAF=requestAnimationFrame(animLoop)}}
 document.addEventListener("visibilitychange",()=>{if(document.hidden){cancelAnimationFrame(animRAF);animRAF=0}else startAnim()});
@@ -420,7 +422,9 @@ const WCOMP=(()=>{let s=12345;const rnd=()=>{s=(s*1103515245+12345)%2147483648;r
     const a=(r<1?Math.exp(-(Math.log(r)**2)/0.08):Math.pow(r,-2))*Math.cos(th)**2*Math.sqrt(-2*Math.log(Math.max(1e-6,rnd())));
     out.push([r*1.6,th,a,rnd()*2*Math.PI]);sum+=a*a}
   const n=Math.sqrt(sum);return out.map(c=>[c[0],c[1],c[2]/n,c[3]])})();
-const WG={ok:null,gl:null,canvas:null,prog:null,u:{},tex:{},name:null,raf:0,t0:performance.now(),st:null};
+const WG={ok:null,gl:null,canvas:null,prog:null,u:{},tex:{},name:null,raf:0,t0:performance.now(),st:null,tAcc:0,last:0};
+// tempo i animationen efter zoom: snabbare inzoomat, långsammare utzoomat (zoom 13 = normalt)
+const animRate=()=>Math.pow(1.5,map.getZoom()-13);
 const VS="attribute vec2 a;varying vec2 v;void main(){v=vec2(a.x*.5+.5,.5-a.y*.5);gl_Position=vec4(a,0.,1.);}";
 const FS=`precision highp float;
 varying vec2 v;
@@ -495,9 +499,11 @@ function fasImg(name){if(fasImgs.has(name))return fasImgs.get(name);
 function fasName(wd){const X=S.fas;if(!X)return null;let best=null,bd=1e9;for(const d of X.dirs){const nm="d"+String(Math.round(d*10)).padStart(4,"0");if(!X.done.includes(nm))continue;
   const dd=Math.abs(((wd-d+540)%360)-180);if(dd<bd){bd=dd;best=nm}}return best}
 function reliefPossible(wd){return WG.ok!==false&&!!S.fas&&!!fasName(wd)}
-function reliefHide(){cancelAnimationFrame(WG.raf);WG.raf=0;WG.st=null;if(overlays.relief)overlays.relief.getElement().style.display="none"}
-function reliefFrame(){const st=WG.st,gl=WG.gl;if(!st||!gl||document.hidden){WG.raf=0;return}
-  gl.viewport(0,0,WG.canvas.width,WG.canvas.height);gl.uniform1f(WG.u.uT,(performance.now()-WG.t0)/1000);gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+function reliefHide(){cancelAnimationFrame(WG.raf);WG.raf=0;WG.last=0;WG.st=null;if(overlays.relief)overlays.relief.getElement().style.display="none"}
+function reliefFrame(){const st=WG.st,gl=WG.gl;if(!st||!gl||document.hidden){WG.raf=0;WG.last=0;return}
+  // tiden räknas framåt bild för bild, så att tempot kan ändras utan att vågorna hoppar
+  const now=performance.now();if(WG.last)WG.tAcc+=Math.min(.1,(now-WG.last)/1000)*animRate();WG.last=now;
+  gl.viewport(0,0,WG.canvas.width,WG.canvas.height);gl.uniform1f(WG.u.uT,WG.tAcc);gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
   WG.raf=requestAnimationFrame(reliefFrame)}
 document.addEventListener("visibilitychange",()=>{if(!document.hidden&&WG.st&&!WG.raf)WG.raf=requestAnimationFrame(reliefFrame)});
 // Avstånd till närmaste land i kartpunkter (snabb tvåpassmetod, 3-4-avstånd)
