@@ -1,8 +1,8 @@
 // Sparar appen, datan och kartbilder du har tittat på, så att kartan fungerar med dålig täckning.
 // Appen, datan och kustmasken hämtas alltid från nätet först, så att ändringar syns direkt;
 // sparade kopior används bara när nätet saknas. Bakgrundskartorna sparas och återanvänds.
-const APP="app-v4",TILES="tiles-v2",MAXTILES=4000;
-const SHELL=["./","index.html","app.js","app.css","manifest.webmanifest","icon.svg",
+const APP="app-v5",TILES="tiles-v2",MAXTILES=4000;
+const SHELL=["./","index.html","js/grund.js","js/rita.js","js/relief.js","js/lager.js","js/ui.js","app.css","manifest.webmanifest","icon.svg",
   "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js","https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"];
 self.addEventListener("install",e=>{e.waitUntil(caches.open(APP).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting()))});
 self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==APP&&k!==TILES).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
