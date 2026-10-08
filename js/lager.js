@@ -126,9 +126,12 @@ function drawZones(R,vx0,vy0,vx1,vy1,mz,Z){const mg=4,cx0=Math.max(0,vx0-R.px0-m
     drawCrestSet(0);startAnim()}
   else{crestSet=null;hideCanvas("crests")}
   if(!relief)reliefHide()}
-let MASK_MAX=13,lastCoast=null;
+let MASK_MAX=13,lastCoast=null,coastKey=null;
 async function drawCoast(){const zz=map.getZoom(),cz=Math.min(MASK_MAX,Math.max(11,zz)),bnd=map.getBounds().pad(.3),
   nw=CRS.latLngToPoint(bnd.getNorthWest(),cz),se=CRS.latLngToPoint(bnd.getSouthEast(),cz),x0=Math.floor(nw.x),y0=Math.floor(nw.y),W0=Math.ceil(se.x)-x0,H0=Math.ceil(se.y)-y0;
+  // samma vy och samma inställningar som förra gången (till exempel nytt tidssteg): rita inte om
+  const ck=[zz,cz,x0,y0,W0,H0,S.land,S.layers.contours,!!S.terr,!!S.trees,window.devicePixelRatio].join("|");
+  if(ck===coastKey&&lastCoast&&overlays.coast)return;
   const R=await region(cz,x0,y0,W0,H0),dpr=window.devicePixelRatio||1;
   let k=Math.pow(2,zz-cz)*dpr;k=Math.min(k,4096/W0,4096/H0);const h=k/2;
   const x=overlayCanvas("coast",cz,x0,y0,W0,H0,k),LAND=new Uint8Array(W0*H0);for(let i=0;i<LAND.length;i++)LAND[i]=R.water[i]?0:1;
@@ -139,7 +142,7 @@ async function drawCoast(){const zz=map.getZoom(),cz=Math.min(MASK_MAX,Math.max(
     // terrängskuggning med skog ovanpå landfärgen, klippt till kustlinjen
     if(S.terr&&S.layers.contours)drawTerrain(x,loops,h,cz,x0,y0,k)}
   if(S.terr&&S.layers.contours)drawContours(x,cz,x0,y0,k,zz);
-  strokeLoops(x,loops,h,"#15191D",1.5*dpr)}
+  strokeLoops(x,loops,h,"#15191D",1.5*dpr);coastKey=ck}
 // Terrängskuggning: markhöjd från Lantmäteriet plus trädhöjd från Skogsstyrelsen, skuggad med ljuset
 // från nordväst som på en terrängkarta. Skog tonas grön och blir upphöjd, så att berg och skogsdungar
 // får djup. Bilden byggs en gång (rader jämnt fördelade i kartans projektion) och skalas sedan.
@@ -172,12 +175,26 @@ function drawTerrain(x,loops,h,cz,x0,y0,k){const T=S.terr,I=terrainImage();if(!I
 // Höjdkurvor på land ur Lantmäteriets höjdmodell (data/terrang.json, ca 20 m mellan punkterna).
 // Tätare kurvor ju mer man zoomar in; var femte kurva är lite kraftigare.
 let contourCache={key:null,lev:null};
+// Höjdkurvorna för hela området räknas en gång i bakgrunden, en nivå i taget, och återanvänds sedan
+// när kartan flyttas. Tills de är klara räknas bara det som syns.
+const CONT={};
+function contourBuild(step){if(CONT[step]||!S.terr)return;const T=S.terr,W=T.nx,H=T.ny,c={lev:[],done:false};CONT[step]=c;
+  let hi=0;for(let i=0;i<T.H.length;i++)if(T.H[i]>hi)hi=T.H[i];let L=step;
+  const idle=window.requestIdleCallback?f=>requestIdleCallback(f,{timeout:2000}):f=>setTimeout(f,50);
+  const next=()=>{if(L>hi){c.done=true;coastKey=null;schedule();return}
+    const M=new Uint8Array(W*H);for(let i=0;i<M.length;i++)M[i]=T.H[i]>=L?1:0;const loops=traceLoops(M,W,H,2);
+    for(const p of loops){let a=1e9,b=1e9,e=-1e9,d=-1e9;for(const q of p){if(q[0]<a)a=q[0];if(q[0]>e)e=q[0];if(q[1]<b)b=q[1];if(q[1]>d)d=q[1]}p.bb=[a,b,e,d]}
+    c.lev.push([L,loops]);L+=step;idle(next)};
+  idle(next)}
 function drawContours(x,cz,x0,y0,k,zz){const T=S.terr;if(zz<12)return;const step=zz>=14?5:10,bold=zz>=14?25:50;
   const b=map.getBounds().pad(.05);
-  const c0=Math.max(0,Math.floor((b.getWest()-T.lon0)/T.dlon)),c1=Math.min(T.nx,Math.ceil((b.getEast()-T.lon0)/T.dlon));
-  const r0=Math.max(0,Math.floor((T.lat0-b.getNorth())/T.dlat)),r1=Math.min(T.ny,Math.ceil((T.lat0-b.getSouth())/T.dlat));
-  const W=c1-c0,H=r1-r0;if(W<3||H<3)return;
-  const key=[c0,r0,W,H,step].join("|");let lev=contourCache.key===key?contourCache.lev:null;
+  let c0=Math.max(0,Math.floor((b.getWest()-T.lon0)/T.dlon)),c1=Math.min(T.nx,Math.ceil((b.getEast()-T.lon0)/T.dlon));
+  let r0=Math.max(0,Math.floor((T.lat0-b.getNorth())/T.dlat)),r1=Math.min(T.ny,Math.ceil((T.lat0-b.getSouth())/T.dlat));
+  let W=c1-c0,H=r1-r0;if(W<3||H<3)return;
+  const full=CONT[step]&&CONT[step].done?CONT[step]:null;contourBuild(step);
+  const vb=[2*c0,2*r0,2*c1+4,2*r1+4];                                      // det synliga, i kurvornas koordinater
+  const key=[c0,r0,W,H,step].join("|");let lev=full?full.lev:contourCache.key===key?contourCache.lev:null;
+  if(full){c0=0;r0=0;W=T.nx;H=T.ny}
   if(!lev){const sub=new Uint8Array(W*H);let hi=0;for(let r=0;r<H;r++){const o=(r0+r)*T.nx+c0;for(let c=0;c<W;c++){const v=T.H[o+c];sub[r*W+c]=v;if(v>hi)hi=v}}
     lev=[];for(let L=step;L<=hi;L+=step){const M=new Uint8Array(W*H);for(let i=0;i<M.length;i++)M[i]=sub[i]>=L?1:0;lev.push([L,traceLoops(M,W,H,2)])}
     contourCache={key,lev}}
@@ -187,7 +204,8 @@ function drawContours(x,cz,x0,y0,k,zz){const T=S.terr;if(zz<12)return;const step
   const dpr=window.devicePixelRatio||1;x.lineJoin="round";x.lineCap="round";
   for(const [L,loops] of lev){const strong=L%bold===0;x.lineWidth=(strong?1.1:.6)*dpr;x.strokeStyle=strong?"rgba(120,82,40,.75)":"rgba(140,100,55,.5)";x.beginPath();
     const Wl=loops.W,Hl=loops.H,edge=q=>q[0]<2.6||q[1]<2.6||q[0]>2*Wl-2.6||q[1]>2*Hl-2.6;
-    for(const p of loops){let pen=false;for(const q of p){if(edge(q)){pen=false;continue}const X=TX(q[0]),Y=TY(q[1]);if(pen)x.lineTo(X,Y);else{x.moveTo(X,Y);pen=true}}}
+    for(const p of loops){if(full&&p.bb&&(p.bb[2]<vb[0]||p.bb[0]>vb[2]||p.bb[3]<vb[1]||p.bb[1]>vb[3]))continue;   // utanför bilden
+      let pen=false;for(const q of p){if(edge(q)){pen=false;continue}const X=TX(q[0]),Y=TY(q[1]);if(pen)x.lineTo(X,Y);else{x.moveTo(X,Y);pen=true}}}
     x.stroke()}}
 // Ytor som täcks av tidsraden, knapparna och panelen, så att inga etiketter hamnar under dem.
 function uiBoxes(){const m=$("map").getBoundingClientRect(),out=[];
