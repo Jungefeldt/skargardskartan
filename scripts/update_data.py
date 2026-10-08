@@ -463,6 +463,11 @@ if __name__ == "__main__":
     except Exception as ex:  # noqa: BLE001
         print(f"Detaljer från OpenStreetMap kunde inte hämtas ({ex}), försöker igen nästa körning")
     try:
+        import satellit
+        with_time_limit(10 * 60, lambda: satellit.build(8 * 60))
+    except Exception as ex:  # noqa: BLE001
+        print(f"Satellitbilder kunde inte hämtas ({ex}), försöker igen nästa körning")
+    try:
         with_time_limit(5 * 60, ensure_depth)
     except Exception as ex:  # noqa: BLE001
         print(f"Djupdata kunde inte hämtas ({ex}), försöker igen nästa körning")
