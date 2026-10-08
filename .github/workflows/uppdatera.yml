@@ -42,6 +42,8 @@ jobs:
           COPERNICUSMARINE_SERVICE_PASSWORD: ${{ secrets.COPERNICUS_PASSWORD }}
           LM_USERNAME: ${{ secrets.LM_USERNAME }}
           LM_PASSWORD: ${{ secrets.LM_PASSWORD }}
+          SKS_USER
+          SKS_PASSWORD
         run: cd scripts && python update_data.py
 
       - name: Spara i förrådet
