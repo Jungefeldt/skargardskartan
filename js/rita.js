@@ -37,6 +37,8 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     let nwi=0;const WI=new Int32Array(Math.max(0,(wx1-wx0)*(wy1-wy0)));for(let y=wy0;y<wy1;y++){const o=y*R.W;for(let x=wx0;x<wx1;x++)if(WA[o+x])WI[nwi++]=o+x}
     // kustlinje: skarp vektorlinje i skärmens upplösning, som på ett sjökort
     await drawCoast();if(my!==seq)return;await yieldUI();
+    // första gången: sjömärkena efter land, och vågor och vind först när sjömärkena har laddat (högst 1,5 s)
+    if(!map.hasLayer(seamarkLayer)){seamarkLayer.addTo(map);await new Promise(r=>{let d=false;const f=()=>{if(!d){d=true;r()}};seamarkLayer.once("load",f);setTimeout(f,1500)})}
     if(!haveLa&&!haveT&&!privOn&&!(S.depth&&Lyr.depth)){hideCanvas();hideCanvas("zones");hideCanvas("crests");crestSet=null;reliefHide();laR=null;laT=null;drawArrows(placeNames(),true);legend();if(sel)sheet();return}
     // lä
     // riktningen avrundas till 5 grader; samma vy och riktning återanvänder beräkningen (snabb uppspelning)
