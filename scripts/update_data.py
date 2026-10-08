@@ -458,6 +458,11 @@ if __name__ == "__main__":
         with_time_limit(TEMP_BUDGET_S, update_temp)
     ensure_names()
     try:
+        import osm_detalj
+        with_time_limit(8 * 60, lambda: osm_detalj.build(6 * 60))
+    except Exception as ex:  # noqa: BLE001
+        print(f"Detaljer från OpenStreetMap kunde inte hämtas ({ex}), försöker igen nästa körning")
+    try:
         with_time_limit(5 * 60, ensure_depth)
     except Exception as ex:  # noqa: BLE001
         print(f"Djupdata kunde inte hämtas ({ex}), försöker igen nästa körning")
