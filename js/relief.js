@@ -136,8 +136,9 @@ function fasDir(name,img,lon,lat){const X=S.fas,r=X.range[name];let pd=WG.pd[nam
   let sx=0,sy=0,sl=0,n=0;for(let dy=-6;dy<=6;dy+=3)for(let dx=-6;dx<=6;dx+=3){const x=Math.max(1,Math.min(pd.w-3,gx+dx)),y=Math.max(1,Math.min(pd.h-3,gy+dy)),q=val(x,y);
     const ex=(val(x+1,y)-q)/mx,ny=(q-val(x,y+1))/my,l=Math.hypot(ex,ny);if(l>1e-6){sx+=ex/l;sy+=ny/l;sl+=1/l;n++}}
   const l=Math.hypot(sx,sy);return l>1e-6?[sx/l,sy/l,sl/n]:null}           // riktning öster, norr och fasfältets våglängd (m)
-// mjuk övergång mellan tidssteg: värdena glider under FADE_MS
-const FADE_MS=700;
+// mjuk övergång mellan tidssteg: värdena glider under FADE_MS. Vid uppspelning är övergången jämn och
+// längre än steget, och nästa övergång startar från läget just då, så att rörelsen aldrig stannar.
+const FADE_MS=700,PLAY_FADE_MS=1150;
 function reliefUniforms(V){const gl=WG.gl,u=WG.u,l=Math.hypot(V.tx,V.ty)||1,spread=.3+.55*V.w,CS=new Float32Array(NCOMP*2);
   WCOMP.forEach((c,i)=>{CS[i*2]=Math.cos(c[1]*spread);CS[i*2+1]=Math.sin(c[1]*spread)});          // spridning åt sidorna efter vinden
   gl.uniform2fv(u.uCS,CS);gl.uniform2f(u.uTr,V.tx/l,V.ty/l);gl.uniform1f(u.uLam,V.lam);gl.uniform1f(u.uSc,V.sc);gl.uniform1f(u.uW,V.w);gl.uniform1f(u.uU,V.u)}
@@ -156,9 +157,9 @@ function reliefHide(){cancelAnimationFrame(WG.raf);WG.raf=0;WG.last=0;WG.st=null
 function reliefFrame(){const st=WG.st,gl=WG.gl;if(!st||!gl||document.hidden){WG.raf=0;WG.last=0;return}
   // tiden räknas framåt bild för bild i verklig takt (vågorna har verklig längd och fart)
   const now=performance.now();if(WG.last)WG.tAcc+=Math.min(.1,(now-WG.last)/1000);WG.last=now;
-  if(WG.fade){const F=WG.fade,s0=Math.min(1,(now-F.t0)/FADE_MS),s=s0*s0*(3-2*s0),A=F.from,B=F.to;
+  if(WG.fade){const F=WG.fade,s0=Math.min(1,(now-F.t0)/F.ms),s=F.lin?s0:s0*s0*(3-2*s0),A=F.from,B=F.to;
     const V={tx:A.tx+(B.tx-A.tx)*s,ty:A.ty+(B.ty-A.ty)*s,lam:A.lam*Math.pow(B.lam/A.lam,s),sc:A.sc*Math.pow(B.sc/A.sc,s),w:A.w+(B.w-A.w)*s,u:A.u+(B.u-A.u)*s};
-    reliefUniforms(V);gl.uniform1f(WG.u.uMix,s);WG.cur=V;if(s0>=1)WG.fade=null}
+    reliefUniforms(V);gl.uniform1f(WG.u.uMix,s);WG.cur=V;WG.mix=s;if(s0>=1)WG.fade=null}
   gl.viewport(0,0,WG.canvas.width,WG.canvas.height);gl.uniform1f(WG.u.uT,WG.tAcc);gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
   WG.raf=requestAnimationFrame(reliefFrame)}
 document.addEventListener("visibilitychange",()=>{if(!document.hidden&&WG.st&&!WG.raf)WG.raf=requestAnimationFrame(reliefFrame)});
@@ -184,9 +185,11 @@ async function reliefShow(R,cx0,cy0,W0,H0,k,mz,Hc,wd,U){const name=fasName(wd),i
   const LD=landDist(R,cx0,cy0,W0,H0),mpz=mpp(mz,(CRS.pointToLatLng(L.point(px0,py0),mz).lat));
   const hw=new Uint8Array(W0*H0*4);for(let y=0;y<H0;y++)for(let x=0;x<W0;x++){const i=y*W0+x,j=(cy0+y)*R.W+cx0+x;
     hw[i*4]=Math.min(255,Math.round(Math.max(0,Hc[j])*200));hw[i*4+1]=R.water[j]?255:0;hw[i*4+2]=Math.min(255,Math.round(Math.max(0,LD[i]-.5)*mpz*2));hw[i*4+3]=255}
-  // samma utsnitt som förra gången (nytt tidssteg): blanda mjukt från den förra våghöjden
-  const key=[mz,px0,py0,W0,H0,cw,ch].join("|"),same=WG.key===key&&WG.hw&&WG.cur;
-  glTex(3,same?WG.hw:hw,true,W0,H0);glTex(2,hw,true,W0,H0);WG.hw=hw;WG.key=key;
+  // mitt i en övergång börjar nästa från det som syns just då (blandningen räknas fram här)
+  const key=[mz,px0,py0,W0,H0,cw,ch].join("|"),same=WG.key===key&&WG.hw&&WG.cur;let prev=hw;
+  if(same){const s=WG.fade?WG.mix:1;prev=WG.hw;
+    if(s<1&&WG.hwOld&&WG.hwOld.length===WG.hw.length){prev=new Uint8Array(WG.hw.length);for(let i=0;i<prev.length;i++)prev[i]=WG.hwOld[i]+(WG.hw[i]-WG.hwOld[i])*s}}
+  glTex(3,prev,true,W0,H0);glTex(2,hw,true,W0,H0);WG.hwOld=prev;WG.hw=hw;WG.key=key;
   const nw=CRS.pointToLatLng(L.point(px0,py0),mz),se=CRS.pointToLatLng(L.point(px0+W0,py0+H0),mz),r=X.range[name],lat=(nw.lat+se.lat)/2;
   // vindstyrkan avgör våglängden (JONSWAP, ca 4 km vindsträcka) och vågornas karaktär; minst 14 pixlar lång
   const Uw=Math.max(1,U||8),Tp=.286*Math.cbrt(9.81*4000/(Uw*Uw))*Uw/9.81,kpr=Math.pow(2*Math.PI/Tp,2)/9.81;
@@ -194,8 +197,9 @@ async function reliefShow(R,cx0,cy0,W0,H0,k,mz,Hc,wd,U){const name=fasName(wd),i
   const to=(wd+180)*Math.PI/180,fd=fasDir(name,imgs[0],c0.lng,c0.lat)||[Math.sin(to),Math.cos(to),lamT];
   const bend=map.getZoom()>=15?1:0,V={tx:fd[0],ty:fd[1],lam:lamT,sc:fd[2]/lamT,w:Math.max(0,Math.min(1,(Uw-2)/11)),u:Uw};
   gl.uniform1f(WG.u.uBend,bend);
-  if(same&&WG.bend===bend){WG.fade={t0:performance.now(),from:WG.cur,to:V};gl.uniform1f(WG.u.uMix,0);reliefUniforms(WG.cur)}
-  else{WG.fade=null;reliefUniforms(V);gl.uniform1f(WG.u.uMix,1);WG.cur=V}
+  const playing=typeof playT!=="undefined"&&!!playT;
+  if(same&&WG.bend===bend){WG.fade={t0:performance.now(),from:WG.cur,to:V,ms:playing?PLAY_FADE_MS:FADE_MS,lin:playing};WG.mix=0;gl.uniform1f(WG.u.uMix,0);reliefUniforms(WG.cur)}
+  else{WG.fade=null;WG.mix=1;reliefUniforms(V);gl.uniform1f(WG.u.uMix,1);WG.cur=V}
   WG.bend=bend;
   gl.uniform2f(WG.u.uTx,1/W0,1/H0);
   gl.uniform4f(WG.u.uPR,r[0],r[1],r[2],r[3]);gl.uniform4f(WG.u.uGeo,nw.lng,se.lng,nw.lat,se.lat);
