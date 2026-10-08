@@ -6,8 +6,10 @@ Trädhöjd från Skogsstyrelsens öppna trädhöjdsraster (laserskanning, 1 x 1 
 rutnät som höjdmodellen i data/terrang.json (ca 20 m mellan punkterna). Används till läet för
 vinden (vind_la.py) och till terrängskuggningen på land i appen.
 
-Skogsstyrelsens öppna bildtjänster letas upp i deras tjänstekatalog: först trädhöjdsraster
-(Tradhojd), sedan Skogliga grunddata med medelhöjd. Tjänster som kräver inloggning hoppas över.
+Skogsstyrelsens rasterdata kräver ett (kostnadsfritt) användarkonto. Finns SKS_USER och
+SKS_PASSWORD i miljön loggar skriptet in och hämtar en tillfällig nyckel (token). Bildtjänsterna
+letas upp i tjänstekatalogen, eller provas direkt om katalogen inte går att lista: först
+trädhöjdsraster (Tradhojd), sedan Skogliga grunddata med medelhöjd.
 Rastret hämtas i bitar, i dubbel upplösning, och medelvärdesbildas till rutnätet. Finns ingen
 öppen tjänst används Metas och World Resources Institutes globala trädhöjdskarta (1 m, gjord
 med maskininlärning på satellitbilder 2009-2020, medelfel ca 2,8 m), som ligger öppet hos AWS.
@@ -16,8 +18,10 @@ Resultat: data/trad.png (gråskala, trädhöjd i kvartsmeter, 0 = ingen skog) oc
 med rutnätet och källan. Saknas tjänsten görs ingenting, och läet räknas då med skog från
 OpenStreetMap som förut.
 """
+import base64
 import io
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -30,6 +34,8 @@ from common import DATA
 
 ROOT = "https://geodata.skogsstyrelsen.se/arcgis/rest/services"
 FOLDERS = ("Publikt",)
+KNOWN = ("Publikt/Tradhojd_3_2", "Publikt/SkogligaGrunddata_3_1")    # provas om katalogen är stängd
+AUTH = {"token": None, "basic": None}
 FTP = ("ftp.skogsstyrelsen.se", "sgd", "rasterSKS")     # publicerat av Skogsstyrelsen
 META = "https://dataforgood-fb-data.s3.amazonaws.com/forests/v1/alsgedi_global_v6_float"
 OUT_PNG, OUT_JSON = DATA / "trad.png", DATA / "trad.json"
@@ -47,8 +53,48 @@ class NoAccess(Exception):
     pass
 
 
+def with_token(url):
+    if AUTH["token"]:
+        return url + ("&" if "?" in url else "?") + "token=" + urllib.parse.quote(AUTH["token"])
+    return url
+
+
+def headers():
+    h = {"User-Agent": "skargardskartan/1.0"}
+    if AUTH["basic"] and not AUTH["token"]:
+        h["Authorization"] = "Basic " + AUTH["basic"]
+    return h
+
+
+def login():
+    """Loggar in med Skogsstyrelsens användarkonto (SKS_USER, SKS_PASSWORD) och hämtar en token.
+    Lösenord och token skrivs aldrig ut i loggen."""
+    user, pwd = os.environ.get("SKS_USER"), os.environ.get("SKS_PASSWORD")
+    if not (user and pwd):
+        log("  inget användarkonto för Skogsstyrelsen (SKS_USER, SKS_PASSWORD), provar utan inloggning")
+        return
+    AUTH["basic"] = base64.b64encode(f"{user}:{pwd}".encode()).decode()
+    host = ROOT.split("/rest/")[0]
+    for url in (host + "/tokens/generateToken", host + "/sharing/rest/generateToken"):
+        data = urllib.parse.urlencode({"username": user, "password": pwd, "client": "requestip",
+                                       "expiration": 120, "f": "json"}).encode()
+        try:
+            req = urllib.request.Request(url, data=data, headers={"User-Agent": "skargardskartan/1.0"})
+            with urllib.request.urlopen(req, timeout=60) as r:
+                js = json.loads(r.read().decode("utf-8"))
+            if js.get("token"):
+                AUTH["token"] = js["token"]
+                log("  inloggad hos Skogsstyrelsen")
+                return
+            msg = (js.get("error") or {}).get("message") or (js.get("error") or {}).get("details") or "inget svar"
+            log(f"  inloggningen gav ingen nyckel ({str(msg)[:120]})")
+        except Exception as ex:  # noqa: BLE001
+            log(f"  inloggningen misslyckades via {url.split('/arcgis')[1]}: {str(ex)[:120]}")
+    log("  provar med lösenordet direkt i anropen")
+
+
 def get_json(url):
-    req = urllib.request.Request(url, headers={"User-Agent": "skargardskartan/1.0"})
+    req = urllib.request.Request(with_token(url), headers=headers())
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
             js = json.loads(r.read().decode("utf-8"))
@@ -72,10 +118,10 @@ def find_sources():
     for folder in FOLDERS:
         try:
             js = get_json(f"{ROOT}/{folder}?f=json")
+            names = [s["name"] for s in js.get("services", []) if s.get("type") == "ImageServer"]
         except Exception as ex:  # noqa: BLE001
-            log(f"  tjänstekatalogen {folder}: {ex}")
-            continue
-        names = [s["name"] for s in js.get("services", []) if s.get("type") == "ImageServer"]
+            log(f"  tjänstekatalogen {folder}: {ex}, provar de kända tjänsterna direkt")
+            names = [k for k in KNOWN if k.startswith(folder + "/")]
         log(f"  bildtjänster i {folder}: {', '.join(names) or 'inga'}")
         for nm in names:
             p = plain(nm)
@@ -175,7 +221,7 @@ def fetch_block(url, band, w, s, e, n, W, H):
     from PIL import Image
     q = {"bbox": f"{w},{s},{e},{n}", "bboxSR": 4326, "imageSR": 4326, "size": f"{W},{H}", "bandIds": band,
          "format": "tiff", "pixelType": "S16", "noData": 0, "interpolation": "RSP_BilinearInterpolation", "f": "image"}
-    req = urllib.request.Request(url + "/exportImage?" + urllib.parse.urlencode(q), headers={"User-Agent": "skargardskartan/1.0"})
+    req = urllib.request.Request(with_token(url + "/exportImage?" + urllib.parse.urlencode(q)), headers=headers())
     last = None
     for attempt in range(3):
         try:
@@ -218,7 +264,8 @@ def build(budget_s=8 * 60):
            "dlat": T["dlat"], "dlon": T["dlon"], "nx": T["nx"], "ny": T["ny"]}
     try:
         old = json.loads(OUT_JSON.read_text())
-        if all(old.get(k) == v for k, v in key.items()) and OUT_PNG.exists():
+        retry = str(old.get("source", "")).startswith("Meta") and os.environ.get("SKS_USER") and os.environ.get("SKS_PASSWORD")
+        if all(old.get(k) == v for k, v in key.items()) and OUT_PNG.exists() and not retry:
             return
     except Exception:  # noqa: BLE001
         pass
@@ -227,6 +274,7 @@ def build(budget_s=8 * 60):
     dlon, dlat = T["dlon"] / SUB, T["dlat"] / SUB
     nb = ((H + BLOCK - 1) // BLOCK) * ((W + BLOCK - 1) // BLOCK)
     log(f"Trädhöjd från Skogsstyrelsen: {nx} x {ny} punkter, {nb} bitar")
+    login()
     sources = find_sources()
     full, used = None, None
     for url, band, nm in sources:
