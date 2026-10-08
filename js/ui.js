@@ -46,12 +46,15 @@ function setTime(i){const W=S.wind;if(!W)return;S.ti=Math.max(0,Math.min(W.times
   $("when").innerHTML=fmtTime(W.times[S.ti])+`<small class="${fc?"fc":""}">${fc?"prognos":past?"tidigare":"nu"}</small>`;
   schedule()}
 $("time").oninput=e=>{stopPlay();setTime(+e.target.value)};
-let playT=null;
+let playT=null;const PLAY_MS=800;
 function stopPlay(){if(playT){clearInterval(playT);playT=null;$("play").textContent="▶";$("play").setAttribute("aria-label","Spela upp prognosen")}}
 $("play").onclick=()=>{if(playT){stopPlay();return}const W=S.wind;if(!W)return;
   if(S.ti>=W.times.length-1)setTime(nowIndex());
   $("play").textContent="❚❚";$("play").setAttribute("aria-label","Pausa");
-  playT=setInterval(()=>{if(S.ti>=S.wind.times.length-1){setTime(nowIndex());return}setTime(S.ti+1)},700)};
+  // nästa timme tas när steget har gått och förra omräkningen är klar, så att takten blir jämn
+  let last=performance.now();
+  playT=setInterval(()=>{const now=performance.now();if(now-last<PLAY_MS||busy)return;last=now;
+    if(S.ti>=S.wind.times.length-1){setTime(nowIndex());return}setTime(S.ti+1)},40)};
 $("prev").onclick=()=>{stopPlay();setTime(S.ti-1)};$("next").onclick=()=>{stopPlay();setTime(S.ti+1)};$("now").onclick=()=>{stopPlay();setTime(nowIndex())};
 
 // ------------------------------------------------------------------ kontroller
