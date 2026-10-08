@@ -9,7 +9,7 @@ hindret och vinden är nästan tillbaka efter 20 till 30 hinderhöjder.
 För varje punkt och vindriktning letas hindren i lovart upp (inom MAX_D meter). Ett hinder med
 höjden h på avståndet d ger dämpningen shelter(d / h); det hinder som skyddar mest avgör.
 Hindrets höjd är markhöjden från Lantmäteriets höjdmodell (data/terrang.json) plus trädhöjden
-från Skogsstyrelsens laserskanning (data/trad.png, från trad.py). Saknas den räknas TREE_H meter
+från data/trad.png (Skogsstyrelsen eller Metas och WRI:s globala karta, från trad.py). Saknas den räknas TREE_H meter
 där OpenStreetMap har skog. Varje riktning räknas som ett medel över tre riktningar
 (±SPREAD grader), eftersom vinden aldrig är helt jämn i riktning.
 
@@ -108,13 +108,13 @@ def factor(Hgt, wd, dxm, dym):
 
 
 def tree_grid(T):
-    """Trädhöjd i meter från Skogsstyrelsen i höjdmodellens rutnät, eller None om den saknas."""
+    """(trädhöjd i meter i höjdmodellens rutnät, källa), eller None om den saknas."""
     from PIL import Image
     try:
         meta = json.loads((DATA / "trad.json").read_text())
         if (meta["nx"], meta["ny"], meta["lat0"], meta["lon0"]) != (T["nx"], T["ny"], T["lat0"], T["lon0"]):
             return None
-        return np.array(Image.open(DATA / "trad.png")).astype(np.float32) / meta.get("per_m", 4)
+        return np.array(Image.open(DATA / "trad.png")).astype(np.float32) / meta.get("per_m", 4), meta.get("source", "trädhöjd")
     except Exception:  # noqa: BLE001
         return None
 
@@ -127,8 +127,7 @@ def build(budget_s=10 * 60):
         log("Lä för vinden: höjdmodellen saknas ännu (kommer från Lantmäteriet), väntar")
         return
     T = json.loads(tp.read_text())
-    trees = tree_grid(T)
-    tsrc = "Skogsstyrelsen" if trees is not None else "OpenStreetMap"
+    trees, tsrc = tree_grid(T) or (None, "OpenStreetMap")
     done = []
     try:
         idx = json.loads((OUT / "index.json").read_text())

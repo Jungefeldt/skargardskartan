@@ -9,7 +9,8 @@ vinden (vind_la.py) och till terrängskuggningen på land i appen.
 Skogsstyrelsens öppna bildtjänster letas upp i deras tjänstekatalog: först trädhöjdsraster
 (Tradhojd), sedan Skogliga grunddata med medelhöjd. Tjänster som kräver inloggning hoppas över.
 Rastret hämtas i bitar, i dubbel upplösning, och medelvärdesbildas till rutnätet. Finns ingen
-öppen tjänst skrivs innehållet på Skogsstyrelsens FTP-server ut i loggen, som underlag.
+öppen tjänst används Metas och World Resources Institutes globala trädhöjdskarta (1 m, gjord
+med maskininlärning på satellitbilder 2009-2020, medelfel ca 2,8 m), som ligger öppet hos AWS.
 
 Resultat: data/trad.png (gråskala, trädhöjd i kvartsmeter, 0 = ingen skog) och data/trad.json
 med rutnätet och källan. Saknas tjänsten görs ingenting, och läet räknas då med skog från
@@ -30,8 +31,9 @@ from common import DATA
 ROOT = "https://geodata.skogsstyrelsen.se/arcgis/rest/services"
 FOLDERS = ("Publikt",)
 FTP = ("ftp.skogsstyrelsen.se", "sgd", "rasterSKS")     # publicerat av Skogsstyrelsen
+META = "https://dataforgood-fb-data.s3.amazonaws.com/forests/v1/alsgedi_global_v6_float"
 OUT_PNG, OUT_JSON = DATA / "trad.png", DATA / "trad.json"
-VERSION = 2
+VERSION = 3
 PER_M = 4            # sparas som kvartsmeter, upp till 63,75 m
 BLOCK = 1000         # punkter per bit och led i den hämtade upplösningen
 SUB = 2              # hämtas i dubbel upplösning och medelvärdesbildas
@@ -126,6 +128,48 @@ def list_ftp():
         log(f"  FTP {FTP[0]}: {ex}")
 
 
+def meta_grid(T, W, H, dlon, dlat):
+    """Trädhöjd i decimeter från Metas och WRI:s globala karta, i rutnätet W x H (raderna från norr).
+    Bara de delar av bildfilerna som täcker området läses, i en upplösning nära rutnätets."""
+    import lm_coast
+    lm_coast.need_rasterio()
+    import rasterio
+    from rasterio.transform import from_origin
+    from rasterio.warp import reproject, Resampling
+    w, n = T["lon0"], T["lat0"]
+    e, s = w + W * dlon, n - H * dlat
+    idx = get_json(META + "/tiles.geojson")
+    names = []
+    for f in idx.get("features", []):
+        xs, ys = [], []
+
+        def walk(c):
+            if isinstance(c[0], (int, float)):
+                xs.append(c[0]); ys.append(c[1])
+            else:
+                for q in c:
+                    walk(q)
+        walk(f["geometry"]["coordinates"])
+        if min(xs) < e and max(xs) > w and min(ys) < n and max(ys) > s:
+            p = f.get("properties", {})
+            names.append(str(p.get("tile") or p.get("quadkey") or next(iter(p.values()))))
+    if not names:
+        raise RuntimeError("inga rutor täcker området")
+    log(f"  Meta/WRI: {len(names)} rutor ({', '.join(names)})")
+    out = np.full((H, W), np.nan, dtype=np.float32)
+    dst_t = from_origin(w, n, dlon, dlat)
+    with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR", GDAL_HTTP_MAX_RETRY="3", GDAL_HTTP_RETRY_DELAY="2"):
+        for nm in names:
+            part = np.full((H, W), np.nan, dtype=np.float32)
+            with rasterio.open(f"/vsicurl/{META}/chm/{nm}.tif") as src:
+                reproject(source=rasterio.band(src, 1), destination=part, dst_transform=dst_t, dst_crs="EPSG:4326",
+                          dst_nodata=np.nan, resampling=Resampling.average)
+            out = np.fmax(out, part)
+            log(f"  Meta/WRI: ruta {nm} klar")
+    out = np.where(np.isfinite(out), np.clip(out, 0, 60), 0)
+    return out * 10                                                   # meter -> decimeter
+
+
 def fetch_block(url, band, w, s, e, n, W, H):
     """Trädhöjd i decimeter för en bit, som array med raderna från norr till söder."""
     from PIL import Image
@@ -184,10 +228,6 @@ def build(budget_s=8 * 60):
     nb = ((H + BLOCK - 1) // BLOCK) * ((W + BLOCK - 1) // BLOCK)
     log(f"Trädhöjd från Skogsstyrelsen: {nx} x {ny} punkter, {nb} bitar")
     sources = find_sources()
-    if not sources:
-        log("  ingen öppen bildtjänst med trädhöjd hittades; innehållet på FTP-servern som underlag:")
-        list_ftp()
-        return
     full, used = None, None
     for url, band, nm in sources:
         try:
@@ -211,9 +251,13 @@ def build(budget_s=8 * 60):
         except Exception as ex:  # noqa: BLE001
             log(f"  {nm}: {ex}, provar nästa")
     if used is None:
-        log("  ingen tjänst gick att hämta från; innehållet på FTP-servern som underlag:")
-        list_ftp()
-        return
+        log("  ingen öppen tjänst hos Skogsstyrelsen; använder Metas och WRI:s globala trädhöjdskarta")
+        try:
+            full = meta_grid(T, W, H, dlon, dlat)
+            used = "Meta och WRI, global trädhöjd 1 m"
+        except Exception as ex:  # noqa: BLE001
+            log(f"  Meta/WRI: {ex}")
+            return
     pos = full[full > 0]
     if pos.size and np.percentile(pos, 99) < 60:                  # ser ut att vara meter, inte decimeter
         log("  värdena ser ut att vara i meter, räknar om")
@@ -222,7 +266,7 @@ def build(budget_s=8 * 60):
     m = full.reshape(ny, SUB, nx, SUB).mean(axis=(1, 3)) / 10.0
     Image.fromarray(np.clip(np.round(m * PER_M), 0, 255).astype(np.uint8), "L").save(OUT_PNG, optimize=True)
     land = m > 2
-    OUT_JSON.write_text(json.dumps(dict(key, source=f"Skogsstyrelsen, {used}", per_m=PER_M,
+    OUT_JSON.write_text(json.dumps(dict(key, source=used if used.startswith("Meta") else f"Skogsstyrelsen, {used}", per_m=PER_M,
                                         max_m=round(float(m.max()), 1)), separators=(",", ":")))
     log(f"Trädhöjd: klar, skog över 2 m på {land.mean() * 100:.0f} % av punkterna, högst {m.max():.0f} m")
 
