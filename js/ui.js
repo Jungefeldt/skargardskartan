@@ -2,27 +2,48 @@
    Filerna i js/ laddas i ordning från index.html och delar variabler med varandra. */
 "use strict";
 // ------------------------------------------------------------------ vindpilar
-const arrowLayer=L.layerGroup().addTo(map);
-function drawArrows(ui,shared){arrowLayer.clearLayers();const boxes=shared?ui:(ui||[]).slice();if(!S.layers.arrows)return boxes;
-  const add=(ll,wd,ws,gust,big)=>{const s=big?44:36,p=map.latLngToContainerPoint(ll),bx=[p.x-34,p.y-s/2,p.x+34,p.y+s/2+34];
+// Pilarna ligger kvar mellan omritningarna (en per prognospunkt). När tiden byts vrider de sig mjukt
+// den kortaste vägen till den nya riktningen, färgen glider över och siffrorna räknas fram.
+const arrowLayer=L.layerGroup().addTo(map),ARW=new Map();
+function drawArrows(ui,shared){const boxes=shared?ui:(ui||[]).slice(),used=new Set();
+  const add=(key,ll,wd,ws,gust,big)=>{const s=big?44:36,p=map.latLngToContainerPoint(ll),bx=[p.x-34,p.y-s/2,p.x+34,p.y+s/2+34];
     const sz=map.getSize();if(bx[0]<2||bx[1]<2||bx[2]>sz.x-2||bx[3]>sz.y-2)return;
-    if(boxes.some(o=>bx[0]<o[2]&&bx[2]>o[0]&&bx[1]<o[3]&&bx[3]>o[1]))return false;arrowAt(ll,wd,ws,gust,big);boxes.push(bx);return true};
-  if(S.src==="egen"){add(map.getCenter(),S.own.dir,S.own.sp,null,true);return boxes}
-  const W=S.wind;if(!W)return boxes;const ki=k=>W.keys.indexOf(k),b=map.getBounds().pad(.05),z=map.getZoom(),every=z<=9?3:z<=10?2:1;
-  let placed=0;
-  W.points.forEach((p,i)=>{const r=W.series[i][S.ti];if(!r||r[ki("ws")]==null)return;const row=Math.round((p[0]-W.points[0][0])/0.1),col=Math.round((p[1]-W.points[0][1])/0.15);
-    if(row%every||col%every)return;if(!b.contains(p))return;if(add(L.latLng(p[0],p[1]),r[ki("wd")],r[ki("ws")],r[ki("gust")]))placed++});
-  // inzoomat kan alla prognospunkter hamna utanför bilden: rita då en pil med vinden för platsen,
-  // på en ledig plats så nära mitten som möjligt (helst över vatten)
-  if(!placed){const sz=map.getSize(),cands=[];
-    for(let gy=1;gy<8;gy++)for(let gx=1;gx<8;gx++){const pt=L.point(sz.x*gx/8,sz.y*gy/8),ll=map.containerPointToLatLng(pt);
-      cands.push({ll,d:Math.hypot(pt.x-sz.x/2,pt.y-sz.y/2)+(onWater(ll)?0:1e4)})}
-    cands.sort((a,c)=>a.d-c.d);
-    for(const c of cands){const lw=windAt(c.ll.lat,c.ll.lng,S.ti);if(!lw||lw.ws==null)continue;if(add(c.ll,lw.wd,lw.ws,lw.gust))break}}
+    if(boxes.some(o=>bx[0]<o[2]&&bx[2]>o[0]&&bx[1]<o[3]&&bx[3]>o[1]))return false;arrowAt(key,ll,wd,ws,gust,big);used.add(key);boxes.push(bx);return true};
+  const W=S.wind;
+  if(!S.layers.arrows){}
+  else if(S.src==="egen")add("egen",map.getCenter(),S.own.dir,S.own.sp,null,true);
+  else if(W){const ki=k=>W.keys.indexOf(k),b=map.getBounds().pad(.05),z=map.getZoom(),every=z<=9?3:z<=10?2:1;
+    let placed=0;
+    W.points.forEach((p,i)=>{const r=W.series[i][S.ti];if(!r||r[ki("ws")]==null)return;const row=Math.round((p[0]-W.points[0][0])/0.1),col=Math.round((p[1]-W.points[0][1])/0.15);
+      if(row%every||col%every)return;if(!b.contains(p))return;if(add("p"+i,L.latLng(p[0],p[1]),r[ki("wd")],r[ki("ws")],r[ki("gust")]))placed++});
+    // inzoomat kan alla prognospunkter hamna utanför bilden: rita då en pil med vinden för platsen,
+    // på en ledig plats så nära mitten som möjligt (helst över vatten)
+    if(!placed){const sz=map.getSize(),cands=[];
+      for(let gy=1;gy<8;gy++)for(let gx=1;gx<8;gx++){const pt=L.point(sz.x*gx/8,sz.y*gy/8),ll=map.containerPointToLatLng(pt);
+        cands.push({ll,d:Math.hypot(pt.x-sz.x/2,pt.y-sz.y/2)+(onWater(ll)?0:1e4)})}
+      cands.sort((a,c)=>a.d-c.d);
+      for(const c of cands){const lw=windAt(c.ll.lat,c.ll.lng,S.ti);if(!lw||lw.ws==null)continue;if(add("mitt",c.ll,lw.wd,lw.ws,lw.gust))break}}}
+  for(const [k,o] of ARW)if(!used.has(k)){cancelAnimationFrame(o.raf);arrowLayer.removeLayer(o.m);ARW.delete(k)}
   return boxes}
-function arrowAt(ll,wd,ws,gust,big){const s=big?44:36,c=windCol(ws);
-  const html=`<svg width="${s}" height="${s}" viewBox="-16 -16 32 32" style="transform:rotate(${wd+180}deg)"><path d="M0 -14 L9 4 L2.5 1.5 L2.5 13 L-2.5 13 L-2.5 1.5 L-9 4 Z" fill="${c}" stroke="#fff" stroke-width="2.4" stroke-linejoin="round" paint-order="stroke"/></svg><span style="border-color:${c}"><b>${f0(ws)}${gust!=null?" ("+f0(gust)+")":""}</b><em>${windTerm(ws).replace(" vind","").toLowerCase()}</em></span>`;
-  L.marker(ll,{pane:"lbl",interactive:false,keyboard:false,icon:L.divIcon({className:"arrow",html,iconSize:[76,s+34],iconAnchor:[38,s/2]})}).addTo(arrowLayer)}
+const arrowNum=(ws,gust)=>f0(ws)+(gust!=null?" ("+f0(gust)+")":"");
+function arrowAt(key,ll,wd,ws,gust,big){const s=big?44:36,c=windCol(ws),o=ARW.get(key);
+  if(!o||o.big!==big){if(o){cancelAnimationFrame(o.raf);arrowLayer.removeLayer(o.m)}
+    const html=`<svg width="${s}" height="${s}" viewBox="-16 -16 32 32" style="transform:rotate(${wd+180}deg)"><path d="M0 -14 L9 4 L2.5 1.5 L2.5 13 L-2.5 13 L-2.5 1.5 L-9 4 Z" style="fill:${c}" stroke="#fff" stroke-width="2.4" stroke-linejoin="round" paint-order="stroke"/></svg><span style="border-color:${c}"><b>${arrowNum(ws,gust)}</b><em>${windTerm(ws).replace(" vind","").toLowerCase()}</em></span>`;
+    const m=L.marker(ll,{pane:"lbl",interactive:false,keyboard:false,icon:L.divIcon({className:"arrow",html,iconSize:[76,s+34],iconAnchor:[38,s/2]})}).addTo(arrowLayer);
+    ARW.set(key,{m,big,ang:wd+180,ws,gust,cw:ws,cg:gust,raf:0});return}
+  if(!o.m.getLatLng().equals(ll))o.m.setLatLng(ll);
+  const el=o.m.getElement();if(!el)return;
+  const playing=typeof playT!=="undefined"&&!!playT,ms=playing?1150:700,tf=`${ms}ms ${playing?"linear":"ease-in-out"}`;
+  const sv=el.querySelector("svg"),pa=el.querySelector("path"),sp=el.querySelector("span"),bb=el.querySelector("b"),em=el.querySelector("em");
+  const ang=o.ang+((wd+180-o.ang)%360+540)%360-180;                 // kortaste vägen runt
+  sv.style.transition=`transform ${tf}`;pa.style.transition=`fill ${tf}`;sp.style.transition=`border-color ${tf}`;
+  sv.style.transform=`rotate(${ang}deg)`;pa.style.fill=c;sp.style.borderColor=c;
+  em.textContent=windTerm(ws).replace(" vind","").toLowerCase();
+  cancelAnimationFrame(o.raf);const w0=o.cw,g0=o.cg,t0=performance.now();
+  const step=now=>{let f=Math.min(1,(now-t0)/ms);if(!playing)f=f*f*(3-2*f);
+    o.cw=w0+(ws-w0)*f;o.cg=g0!=null&&gust!=null?g0+(gust-g0)*f:gust;bb.textContent=arrowNum(o.cw,o.cg);
+    o.raf=f<1?requestAnimationFrame(step):0};
+  o.raf=requestAnimationFrame(step);o.ang=ang;o.ws=ws;o.gust=gust}
 
 // ------------------------------------------------------------------ förklaring
 function legend(){const L_=$("legend"),w=laWind||domainWind(S.ti);let h="";
