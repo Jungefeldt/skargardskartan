@@ -159,18 +159,21 @@ async function swanCase(wd,U){const X=S.swan;if(!X)return null;const done=new Se
   const [A,B]=await Promise.all([swanFile(swanName(best,a)),swanFile(swanName(best,b))]);if(!A||!B)return null;
   const t=b>a?(U-a)/(b-a):0,scale=a===b?U/a:1;return{A,B,t,scale,dir:best}}
 // SWAN-fältet samplat på kartans rutnät: våghöjd (m), period (s) och vågriktning (grader, varifrån)
-function swanSample(R,mz,C){const X=S.swan,N=R.W*R.H,H=new Float32Array(N).fill(-1),T=new Float32Array(N),D=new Float32Array(N);
+// win = [x0, x1, y0, y1] i R:s punkter: bara det som syns (plus marginal) räknas
+function swanSample(R,mz,C,win){const X=S.swan,N=R.W*R.H,H=new Float32Array(N).fill(-1),T=new Float32Array(N),D=new Float32Array(N);
+  const [wx0,wx1,wy0,wy1]=win||[0,R.W,0,R.H];
   const rowF=new Float32Array(R.H),colF=new Float32Array(R.W);
   for(let y=0;y<R.H;y++){const lat=CRS.pointToLatLng(L.point(R.px0,R.py0+y+.5),mz).lat;rowF[y]=(lat-X.lat0)/X.dlat}
   for(let x=0;x<R.W;x++){const lon=CRS.pointToLatLng(L.point(R.px0+x+.5,R.py0),mz).lng;colF[x]=(lon-X.lon0)/X.dlon}
   const nx=X.nx,ny=X.ny,v=(arr,i)=>arr[i];
-  for(let y=0;y<R.H;y++){const fy=rowF[y];if(fy<0||fy>ny-1.001)continue;const y0=fy|0,ty=fy-y0;
-    for(let x=0;x<R.W;x++){const i=y*R.W+x;if(!R.water[i])continue;const fx=colF[x];if(fx<0||fx>nx-1.001)continue;const x0=fx|0,tx=fx-x0;
-      let sh=0,st=0,sw=0,sx=0,sy=0;
-      for(const [j,wt] of [[y0*nx+x0,(1-tx)*(1-ty)],[y0*nx+x0+1,tx*(1-ty)],[(y0+1)*nx+x0,(1-tx)*ty],[(y0+1)*nx+x0+1,tx*ty]]){
+  for(let y=wy0;y<wy1;y++){const fy=rowF[y];if(fy<0||fy>ny-1.001)continue;const y0=fy|0,ty=fy-y0;
+    for(let x=wx0;x<wx1;x++){const i=y*R.W+x;if(!R.water[i])continue;const fx=colF[x];if(fx<0||fx>nx-1.001)continue;const x0=fx|0,tx=fx-x0;
+      let sh=0,st=0,sw=0,sx=0,sy=0;const j0=y0*nx+x0;
+      // de fyra närmaste SWAN-punkterna, utan hjälplistor (snabbt)
+      for(let q=0;q<4;q++){const j=j0+(q&1)+(q>>1)*nx,wt=((q&1)?tx:1-tx)*((q>>1)?ty:1-ty);
         const ha=C.A.hs[j],hb=C.B.hs[j];if(ha===255||hb===255||wt<=0)continue;
         sh+=wt*((ha*(1-C.t)+hb*C.t)/100);st+=wt*((C.A.tm[j]*(1-C.t)+C.B.tm[j]*C.t)/25);
-        const a=(C.A.di[j]/254*360)*Math.PI/180;sx+=wt*Math.sin(a);sy+=wt*Math.cos(a);sw+=wt}
+        const a=C.A.di[j]*.024737;sx+=wt*Math.sin(a);sy+=wt*Math.cos(a);sw+=wt}
       if(sw>0){H[i]=sh/sw*C.scale;T[i]=st/sw;let d=Math.atan2(sx,sy)*180/Math.PI;if(d<0)d+=360;D[i]=d}}}
   return{H,T,D}}
 
@@ -184,8 +187,8 @@ function vindFile(name){if(vindFiles.has(name))return vindFiles.get(name);
     im.onerror=()=>res(null);im.src="data/vind/"+name+".png"});
   vindFiles.set(name,p);return p}
 let leeCache={key:null,LF:null};
-async function leeField(R,mz,wd){const X=S.vind;if(!X)return null;
-  const key=[mz,R.px0,R.py0,R.W,R.H,Math.round(wd)].join("|");if(leeCache.key===key)return leeCache.LF;
+async function leeField(R,mz,wd,win){const X=S.vind;if(!X)return null;const [wx0,wx1,wy0,wy1]=win||[0,R.W,0,R.H];
+  const key=[mz,R.px0,R.py0,R.W,R.H,Math.round(wd),wx0,wx1,wy0,wy1].join("|");if(leeCache.key===key)return leeCache.LF;
   const n=X.dirs.length,step=360/n,f=((wd%360)+360)%360/step,a=Math.floor(f)%n,b=(a+1)%n,t=f-Math.floor(f);
   const nm=d=>"d"+String(Math.round(X.dirs[d]*10)).padStart(4,"0");
   const [A,B]=await Promise.all([vindFile(nm(a)),vindFile(nm(b))]);if(!A||!B)return null;
@@ -193,8 +196,8 @@ async function leeField(R,mz,wd){const X=S.vind;if(!X)return null;
   const rowF=new Float32Array(R.H),colF=new Float32Array(R.W);
   for(let y=0;y<R.H;y++){const lat=CRS.pointToLatLng(L.point(R.px0,R.py0+y+.5),mz).lat;rowF[y]=(X.lat0-lat)/X.dlat-.5}
   for(let x=0;x<R.W;x++){const lon=CRS.pointToLatLng(L.point(R.px0+x+.5,R.py0),mz).lng;colF[x]=(lon-X.lon0)/X.dlon-.5}
-  for(let y=0;y<R.H;y++){const fy=rowF[y];if(fy<0||fy>ny-1.001)continue;const y0=fy|0,ty=fy-y0;
-    for(let x=0;x<R.W;x++){const i=y*R.W+x;if(!R.water[i])continue;const fx=colF[x];if(fx<0||fx>nx-1.001)continue;const x0=fx|0,tx=fx-x0;
+  for(let y=wy0;y<wy1;y++){const fy=rowF[y];if(fy<0||fy>ny-1.001)continue;const y0=fy|0,ty=fy-y0;
+    for(let x=wx0;x<wx1;x++){const i=y*R.W+x;if(!R.water[i])continue;const fx=colF[x];if(fx<0||fx>nx-1.001)continue;const x0=fx|0,tx=fx-x0;
       const j=y0*nx+x0,bil=G=>(G[j]*(1-tx)+G[j+1]*tx)*(1-ty)+(G[j+nx]*(1-tx)+G[j+nx+1]*tx)*ty;
       LF[i]=Math.min(1,(bil(A)*(1-t)+bil(B)*t)/sc)}}
   leeCache={key,LF};return LF}
