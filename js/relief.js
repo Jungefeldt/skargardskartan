@@ -3,8 +3,9 @@
 "use strict";
 // ------------------------------------------------------------------ rörliga vågor i relief (WebGL)
 // Vågytan räknas på grafikkortet som en summa av många vågor med olika längd och riktning.
-// Riktningen kommer från fasfälten P (längs vågornas gång) och Q (tvärs över), som räknats i
-// förväg från SWAN (data/fas), så att vågorna böjer sig runt öar och uddar. Våglängden är den
+// Riktningen är SWAN:s vågriktning mitt i bilden (från fasfälten i data/fas), rak över hela bilden:
+// om vågorna fick böja sig runt varje ö blev det störande ringmönster bakom öarna. Läet syns ändå,
+// eftersom våghöjden på varje plats kommer från SWAN och läberäkningen. Våglängden är den
 // verkliga för vinden (JONSWAP, ca 4 km vindsträcka), men aldrig kortare än 14 pixlar, så att
 // vågorna syns även utzoomat. Våghöjden kommer från SWAN och läet på varje plats.
 // Karaktären följer vinden: i svag vind långa, tunna krusningar åt nästan samma håll; i hård vind
@@ -35,7 +36,8 @@ uniform vec4 uPR,uGeo,uGrid,uC[${NCOMP}];
 uniform float uR[${NCOMP}];
 uniform vec2 uCS[${NCOMP}];
 uniform vec2 uN,uM,uTx;
-uniform float uT,uPx,uSc,uW,uU;
+uniform float uT,uPx,uLam,uW,uU;
+uniform vec2 uTr;
 float hash(vec2 p){p=mod(p,997.);return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
 float vn(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
   return mix(mix(hash(i),hash(i+vec2(1.,0.)),f.x),mix(hash(i+vec2(0.,1.)),hash(i+vec2(1.,1.)),f.x),f.y);}
@@ -51,13 +53,9 @@ void main(){
   vec2 gd=vec2(dR-dL,dU-dD);                                           // åt vilket håll land ligger
   float lon=mix(uGeo.x,uGeo.y,v.x),lat=mix(uGeo.z,uGeo.w,v.y);
   vec2 g=vec2((lon-uGrid.x)/uGrid.z,(uGrid.y-lat)/uGrid.w);
-  float P=uPR.x+(uPR.y-uPR.x)*fld(uP,g),Q=uPR.z+(uPR.w-uPR.z)*fld(uQ,g);
-  float Px=uPR.x+(uPR.y-uPR.x)*fld(uP,g+vec2(1.,0.)),Py=uPR.x+(uPR.y-uPR.x)*fld(uP,g+vec2(0.,1.));
-  float Qx=uPR.z+(uPR.w-uPR.z)*fld(uQ,g+vec2(1.,0.)),Qy=uPR.z+(uPR.w-uPR.z)*fld(uQ,g+vec2(0.,1.));
-  vec2 gP=vec2((Px-P)/uM.x,(P-Py)/uM.y),gQ=vec2((Qx-Q)/uM.x,(Q-Qy)/uM.y);   // per meter, öster och norr
-  float lb=1./max(length(gP),1e-5);vec2 tr=gP*lb,cr=vec2(-tr.y,tr.x);  // tr: vågornas gångriktning
+  vec2 tr=uTr,cr=vec2(-tr.y,tr.x);                                    // vågornas gångriktning
   vec2 x0=vec2(g.x*uM.x,-g.y*uM.y);                                    // meter, fast mot kartan
-  float lam=lb/uSc,kp=6.2832/lam,cp=sqrt(9.81/kp);                     // våglängd här
+  float lam=uLam,kp=6.2832/lam,cp=sqrt(9.81/kp);
   vec2 lt=vec2(-.7071,.7071);                                          // ljuset från nordväst
   vec2 w2=vec2(vn(x0/(lam*2.3)+11.),vn(x0/(lam*2.3)+27.))-.5;vec2 x=x0+w2*lam*.35;
   float D0=25.+60.*H,near=1.-smoothstep(0.,D0,dist);                   // nära land dör vågorna ut
@@ -65,11 +63,10 @@ void main(){
   bool foamOn=uU>6.&&H>.2;
   float d1=lam*.025,d2=lam*.06,d3=lam*.11,f1=lam*.07,f2=lam*.16,f3=lam*.28;
   float eta=0.,s1=0.,s2=0.,s3=0.,e1=0.,e2=0.,e3=0.;vec2 gr=vec2(0.);
-  vec2 wsh=x-x0;                                                       // förvrängningen läggs på fasen
   for(int i=0;i<${NCOMP};i++){vec4 c=uC[i];float ca=uCS[i].x,sa=uCS[i].y;           // riktning, räknad i förväg
-    vec2 kv=6.2832*c.x*uSc*(ca*gP+sa*gQ);float k=length(kv);
+    vec2 kv=6.2832*c.x/lam*vec2(ca*tr.x-sa*tr.y,ca*tr.y+sa*tr.x);float k=length(kv);
     float f=smoothstep(4.,12.,6.2832/k/uPx);if(f<=0.)continue;         // för korta vågor för pixlarna tonas bort
-    float a=6.2832*c.x*uSc*(ca*P+sa*Q)+dot(kv,wsh)-sqrt(9.81*k)*uT+c.w;float A=mix(c.z,uR[i],uW)*amp*f;
+    float a=dot(kv,x)-sqrt(9.81*k)*uT+c.w;float A=mix(c.z,uR[i],uW)*amp*f;
     eta+=A*cos(a);gr-=A*sin(a)*kv;float kt=dot(kv,lt);
     s1+=A*cos(a+kt*d1);s2+=A*cos(a+kt*d2);s3+=A*cos(a+kt*d3);
     if(foamOn){float kf=dot(kv,tr);e1+=A*cos(a+kf*f1);e2+=A*cos(a+kf*f2);e3+=A*cos(a+kf*f3);}}
@@ -97,14 +94,14 @@ void main(){
     float foam=(b0*smoothstep(.28,.5,lc)+tr3*smoothstep(.62-.25*tr3,.74-.25*tr3,lc))*smoothstep(.7,1.2,env)*.95*(1.-near);
     col=mix(col,vec3(.93,.95,.98)*(.86+.14*(1.-shd)),clamp(foam,0.,.92));}
   // bränningar mot exponerade stränder och en sköljzon längs strandkanten
-  float expo=length(gd)>.002?clamp(dot(tr,-normalize(gd)),0.,1.):0.;
-  float hs=smoothstep(.08,.35,H);
-  float zone=1.-smoothstep(0.,20.+55.*H,dist),swash=1.-smoothstep(0.,10.+28.*H,dist);
+  float expo=length(gd)>.002?smoothstep(.45,.9,dot(tr,-normalize(gd))):0.;
+  float hs=smoothstep(.25,.6,H);
+  float zone=1.-smoothstep(0.,8.+22.*H,dist),swash=1.-smoothstep(0.,4.+10.*H,dist);
   float shore=expo*hs*zone;
-  if(shore>.01){vec2 fp=vec2(uSc*P*5.-uT*.5,uSc*Q*5.);float l1=lace(fp),l2=lace(fp*2.1+3.3);
-    float brk=shore*(1.3*smoothstep(0.,.6,e)*smoothstep(.3,.55,l1)+.6*smoothstep(.5,.7,l2));
-    float sw=expo*hs*swash*(.55+.45*sin(uT*1.7+uSc*P*6.283))*smoothstep(.3,.55,l1);
-    col=mix(col,vec3(.93,.95,.98),clamp(brk+sw,0.,.9));}
+  if(shore>.01){vec2 fp=vec2(dot(x,tr)/lam*5.-uT*.5,dot(x,cr)/lam*5.);float l1=lace(fp),l2=lace(fp*2.1+3.3);
+    float brk=shore*(.7*smoothstep(.3,1.,e)*smoothstep(.45,.65,l1)+.25*smoothstep(.6,.78,l2));
+    float sw=expo*hs*swash*(.5+.5*sin(uT*1.7+dot(x,tr)/lam*6.283))*smoothstep(.45,.65,l1)*.5;
+    col=mix(col,vec3(.90,.93,.97),clamp(brk+sw,0.,.6));}
   gl_FragColor=vec4(clamp(col,0.,1.),clamp(hw.g*1.5,0.,1.));}`;
 function glInit(canvas){try{
   const gl=canvas.getContext("webgl",{premultipliedAlpha:false,antialias:false,alpha:true});if(!gl)return false;
@@ -113,18 +110,21 @@ function glInit(canvas){try{
   if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));
   gl.useProgram(p);const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
   const al=gl.getAttribLocation(p,"a");gl.enableVertexAttribArray(al);gl.vertexAttribPointer(al,2,gl.FLOAT,false,0,0);
-  for(const k of ["uP","uQ","uHW","uPR","uGeo","uGrid","uN","uM","uT","uPx","uSc","uW","uU","uTx","uC","uR","uCS"])WG.u[k]=gl.getUniformLocation(p,k);
+  for(const k of ["uP","uQ","uHW","uPR","uGeo","uGrid","uN","uM","uT","uPx","uLam","uTr","uW","uU","uTx","uC","uR","uCS"])WG.u[k]=gl.getUniformLocation(p,k);
   const C=new Float32Array(NCOMP*4),R=new Float32Array(NCOMP);
   WCOMP.forEach(([r,th,calm,rough,ph],i)=>{C.set([r,th,calm,ph],i*4);R[i]=rough});
   gl.uniform4fv(WG.u.uC,C);gl.uniform1fv(WG.u.uR,R);gl.uniform1i(WG.u.uP,0);gl.uniform1i(WG.u.uQ,1);gl.uniform1i(WG.u.uHW,2);
   WG.gl=gl;WG.canvas=canvas;WG.prog=p;WG.name=null;return true}catch(e){console.warn("Rörliga vågor i relief stöds inte här:",e);return false}}
-// fasfältets våglängd (m) nära en punkt, läst ur P-bilden på samma sätt som på grafikkortet
-function fasLam(name,img,lon,lat){const X=S.fas,r=X.range[name];let pd=WG.pd[name];
+// SWAN:s vågriktning nära en punkt (enhetsvektor öster, norr), läst ur P-bilden som på grafikkortet
+function fasDir(name,img,lon,lat){const X=S.fas,r=X.range[name];let pd=WG.pd[name];
   if(!pd){const c=document.createElement("canvas");c.width=img.width;c.height=img.height;const g=c.getContext("2d");g.drawImage(img,0,0);pd=WG.pd[name]={w:img.width,h:img.height,d:g.getImageData(0,0,img.width,img.height).data}}
   const gx=Math.max(1,Math.min(pd.w-3,Math.round((lon-X.lon0)/X.dlon))),gy=Math.max(1,Math.min(pd.h-3,Math.round((X.lat0-lat)/X.dlat)));
   const val=(x,y)=>{const i=(y*pd.w+x)*4;return r[0]+(r[1]-r[0])*(pd.d[i]*256+pd.d[i+1])/65535};
   const mx=X.dlon*111320*Math.cos(lat*Math.PI/180),my=X.dlat*111320,p=val(gx,gy);
-  const gl2=Math.hypot((val(gx+1,gy)-p)/mx,(p-val(gx,gy+1))/my);return gl2>1e-6?1/gl2:50}
+  // medel över ett litet område, så att riktningen inte hoppar när man flyttar kartan lite
+  let sx=0,sy=0;for(let dy=-6;dy<=6;dy+=3)for(let dx=-6;dx<=6;dx+=3){const x=Math.max(1,Math.min(pd.w-3,gx+dx)),y=Math.max(1,Math.min(pd.h-3,gy+dy)),q=val(x,y);
+    const ex=(val(x+1,y)-q)/mx,ny=(q-val(x,y+1))/my,l=Math.hypot(ex,ny);if(l>1e-6){sx+=ex/l;sy+=ny/l}}
+  const l=Math.hypot(sx,sy);return l>1e-6?[sx/l,sy/l]:null}
 function glTex(unit,src,linear,w,h){const gl=WG.gl,t=WG.tex[unit]||(WG.tex[unit]=gl.createTexture());gl.activeTexture(gl.TEXTURE0+unit);gl.bindTexture(gl.TEXTURE_2D,t);
   const f=linear?gl.LINEAR:gl.NEAREST;gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,f);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,f);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
@@ -170,8 +170,8 @@ async function reliefShow(R,cx0,cy0,W0,H0,k,mz,Hc,wd,U){const name=fasName(wd),i
   // vindstyrkan avgör våglängden (JONSWAP, ca 4 km vindsträcka) och vågornas karaktär; minst 14 pixlar lång
   const Uw=Math.max(1,U||8),Tp=.286*Math.cbrt(9.81*4000/(Uw*Uw))*Uw/9.81,kpr=Math.pow(2*Math.PI/Tp,2)/9.81;
   const pxm=mpp(mz,lat)/kg,lamT=Math.max(2*Math.PI/kpr,14*pxm),c0=map.getCenter();
-  const lbRef=fasLam(name,imgs[0],c0.lng,c0.lat);
-  gl.uniform1f(WG.u.uSc,lbRef/lamT);const wch=Math.max(0,Math.min(1,(Uw-2)/11)),spread=.3+.55*wch,CS=new Float32Array(NCOMP*2);
+  const to=(wd+180)*Math.PI/180,tr=fasDir(name,imgs[0],c0.lng,c0.lat)||[Math.sin(to),Math.cos(to)];
+  gl.uniform1f(WG.u.uLam,lamT);gl.uniform2f(WG.u.uTr,tr[0],tr[1]);const wch=Math.max(0,Math.min(1,(Uw-2)/11)),spread=.3+.55*wch,CS=new Float32Array(NCOMP*2);
   WCOMP.forEach((c,i)=>{CS[i*2]=Math.cos(c[1]*spread);CS[i*2+1]=Math.sin(c[1]*spread)});        // spridning åt sidorna efter vinden
   gl.uniform2fv(WG.u.uCS,CS);gl.uniform1f(WG.u.uW,wch);gl.uniform1f(WG.u.uU,Uw);
   gl.uniform2f(WG.u.uTx,1/W0,1/H0);
