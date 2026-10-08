@@ -26,12 +26,12 @@ from common import BOUNDS, DATA, MASK
 STAC = "https://earth-search.aws.element84.com/v1/search"
 UA = "skargardskartan/1.0 github.com/Jungefeldt/skargardskartan"
 OUTD = DATA / "satellit"
-VERSION = 1
+VERSION = 2
 RES_M = 10
 DAYS = 45
 MAX_SCENES = 6
 CLEAR = (4, 5, 6, 7)                   # SCL: vegetation, mark, vatten, oklassat (inte moln, skugga, snö)
-SCALES = {"vass": (-0.2, 0.8), "grumlighet": (0.0, 0.10), "alger": (-0.2, 0.4)}
+SCALES = {"vass": (-0.2, 0.8), "grumlighet": (0.0, 0.06), "alger": (-0.2, 0.4)}
 
 
 def log(*a):
@@ -106,11 +106,7 @@ def read_band(asset, dst_t, shape, nearest=False):
         reproject(arr, out, src_transform=src.window_transform(win), src_crs=src.crs, src_nodata=0,
                   dst_transform=dst_t, dst_crs="EPSG:4326", dst_nodata=0,
                   resampling=Resampling.nearest if nearest else Resampling.bilinear)
-    if nearest:
-        return out
-    rb = (asset.get("raster:bands") or [{}])[0]
-    sc, off = rb.get("scale", 1e-4), rb.get("offset", 0.0)
-    return np.where(out > 0, out * sc + off, np.nan)
+    return out if nearest else np.where(out > 0, out, np.nan)            # råa pixelvärden
 
 
 def build(budget_s=8 * 60):
@@ -152,6 +148,13 @@ def build(budget_s=8 * 60):
             red = read_band(a["red"], dst_t, (ny, nx))
             nir = read_band(a["nir"], dst_t, (ny, nx))
             re1 = read_band(a["rededge1"], dst_t, (ny, nx))
+            # Från processversion 04.00 har pixelvärdena en förskjutning på 1000, som ibland redan är
+            # borttagen av bildkällan. Vatten är mörkt (reflektans nära noll), så medianen över vattnet
+            # avgör: kring 1000 eller mer finns förskjutningen kvar.
+            raw = np.nanmedian(red[clear])
+            off = -1000.0 if raw > 600 else 0.0
+            red, nir, re1 = (red + off) * 1e-4, (nir + off) * 1e-4, (re1 + off) * 1e-4
+            log(f"    rött över vattnet: pixelvärde {raw:.0f}, reflektans {np.nanmedian(red[clear]):.4f}")
         except Exception as ex:  # noqa: BLE001
             log(f"  {f['id']}: {str(ex)[:120]}")
             continue

@@ -6,7 +6,8 @@ Detaljer för land från OpenStreetMap: hus (som ytor), bryggor och pirar, väga
 marktyper (bebyggelse, skog, öppen mark, åker, berg i dagen, våtmark, strand). Används för att rita
 en karta i Lantmäteriets stil ovanpå appens egen kustlinje och terräng.
 
-Hämtas i små rutor från Overpass, så att servrarna inte överbelastas, och sparas kompakt i
+Hämtas i små rutor från Overpass, så att servrarna inte överbelastas. Varje färdig ruta sparas för
+sig, så att nästa körning fortsätter där den förra slutade. När alla är klara läggs de ihop kompakt i
 data/osm/detalj.json: koordinater som heltal i hundratusendels grader relativt områdets sydvästra
 hörn. Hämtas om en gång i veckan, eller när området ändras. Datan är © OpenStreetMaps bidragsgivare,
 ODbL.
@@ -17,9 +18,10 @@ import time
 from common import BOUNDS, DATA
 
 OUT = DATA / "osm" / "detalj.json"
-VERSION = 1
+VERSION = 2
 MAX_AGE_DAYS = 7
-NX, NY = 4, 3                      # rutor över området
+NX, NY = 6, 4                      # rutor över området
+PARTS = DATA / "osm" / "delar"     # färdiga rutor sparas här, så att nästa körning fortsätter där den slutade
 SCALE = 100000                     # hundratusendels grader (ca 1 m)
 
 # marktyper: OSM-taggar -> klass i kartan
@@ -61,59 +63,78 @@ def build(budget_s=6 * 60):
     import build_mask
     t_end = time.time() + budget_s
     w0, s0, e0, n0 = BOUNDS
+    stamp = json.dumps({"version": VERSION, "bounds": BOUNDS})
     try:
         old = json.loads(OUT.read_text())
-        fresh = time.time() - old.get("t", 0) < MAX_AGE_DAYS * 86400
-        if old.get("version") == VERSION and old.get("bounds") == BOUNDS and fresh:
-            return
+        if old.get("version") == VERSION and old.get("bounds") == BOUNDS:
+            if time.time() - old.get("t", 0) < MAX_AGE_DAYS * 86400:
+                return
+            for p in PARTS.glob("*.json"):              # en vecka gammal: hämta om alla rutor
+                p.unlink()
     except Exception:  # noqa: BLE001
         pass
     enc = lambda g: [v for p in g for v in (round((p["lon"] - w0) * SCALE), round((p["lat"] - s0) * SCALE))]
+    dx, dy = (e0 - w0) / NX, (n0 - s0) / NY
+    PARTS.mkdir(parents=True, exist_ok=True)
+
+    def done(i, j):
+        p = PARTS / f"{i}_{j}.json"
+        try:
+            return json.loads(p.read_text()).get("stamp") == stamp
+        except Exception:  # noqa: BLE001
+            return False
+    todo = [(i, j) for j in range(NY) for i in range(NX) if not done(i, j)]
+    log(f"Detaljer från OpenStreetMap: {len(todo)} av {NX * NY} rutor kvar")
+    for i, j in todo:
+        if time.time() > t_end:
+            log("  tiden slut, fortsätter nästa körning")
+            return
+        s, w = s0 + j * dy, w0 + i * dx
+        try:
+            els = build_mask.overpass(query(round(s, 5), round(w, 5), round(s + dy, 5), round(w + dx, 5)),
+                                      timeout=150, attempts=2).get("elements", [])
+        except Exception as ex:  # noqa: BLE001
+            log(f"  ruta {i},{j}: {str(ex)[:100]}, försöker igen nästa körning")
+            continue
+        # varje objekt: [id, klass, koordinater]; id med ringnummer, så att flerdelade ytor behålls
+        items = []
+        for el in els:
+            t = el.get("tags", {})
+            if el["type"] == "way" and el.get("geometry"):
+                geoms = [el["geometry"]]
+            elif el["type"] == "relation":
+                geoms = [m["geometry"] for m in el.get("members", []) if m.get("role") == "outer" and m.get("geometry")]
+            else:
+                geoms = []
+            if "building" in t:
+                kind, cls = "b", 0
+            elif t.get("man_made") in ("pier", "quay", "breakwater", "groyne"):
+                kind, cls = "p", 0
+            elif t.get("highway") in ROADS:
+                kind, cls = "v", ROADS[t["highway"]]
+            else:
+                cls = next((v for (k, val), v in LAND.items() if t.get(k) == val), None)
+                kind = "l"
+                if not cls:
+                    continue
+            for gi, g in enumerate(geoms):
+                if len(g) >= 2:
+                    items.append([f"{el['type'][0]}{el['id']}.{gi}", kind, cls, enc(g)])
+        (PARTS / f"{i}_{j}.json").write_text(json.dumps({"stamp": stamp, "items": items}, separators=(",", ":")))
+        log(f"  ruta {i},{j}: {len(items)} objekt")
+        time.sleep(1)
+    if any(not done(i, j) for j in range(NY) for i in range(NX)):
+        log("  alla rutor är inte klara än, fortsätter nästa körning")
+        return
+    # alla rutor klara: lägg ihop (objekt som korsar rutgränser finns i flera rutor och tas bara en gång)
     out = {"b": [], "p": [], "v": [], "l": []}
     seen = set()
-    dx, dy = (e0 - w0) / NX, (n0 - s0) / NY
-    log(f"Detaljer från OpenStreetMap: {NX * NY} rutor")
-    for j in range(NY):
-        for i in range(NX):
-            if time.time() > t_end:
-                log("  tiden slut, försöker igen nästa körning")
-                return
-            s, w = s0 + j * dy, w0 + i * dx
-            try:
-                els = build_mask.overpass(query(round(s, 5), round(w, 5), round(s + dy, 5), round(w + dx, 5)),
-                                          timeout=150, attempts=2).get("elements", [])
-            except Exception as ex:  # noqa: BLE001
-                log(f"  ruta {i},{j}: {str(ex)[:100]}, försöker igen nästa körning")
-                return
-            n = 0
-            for el in els:
-                key = (el["type"], el["id"])
-                if key in seen:
-                    continue
-                seen.add(key)
-                t = el.get("tags", {})
-                geoms = []
-                if el["type"] == "way" and el.get("geometry"):
-                    geoms = [el["geometry"]]
-                elif el["type"] == "relation":
-                    geoms = [m["geometry"] for m in el.get("members", []) if m.get("role") == "outer" and m.get("geometry")]
-                for g in geoms:
-                    if len(g) < 2:
-                        continue
-                    c = enc(g)
-                    if "building" in t:
-                        out["b"].append(c)
-                    elif t.get("man_made") in ("pier", "quay", "breakwater", "groyne"):
-                        out["p"].append(c)
-                    elif t.get("highway") in ROADS:
-                        out["v"].append([ROADS[t["highway"]], c])
-                    else:
-                        cls = next((v for (k, val), v in LAND.items() if t.get(k) == val), None)
-                        if cls:
-                            out["l"].append([cls, c])
-                    n += 1
-            log(f"  ruta {i},{j}: {n} objekt")
-            time.sleep(1)
+    for p in sorted(PARTS.glob("*.json")):
+        for oid, kind, cls, c in json.loads(p.read_text())["items"]:
+            if oid in seen:
+                continue
+            seen.add(oid)
+            out[kind].append(c if kind in ("b", "p") else [cls, c])
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(dict(out, version=VERSION, bounds=BOUNDS, origin=[w0, s0], scale=SCALE, t=int(time.time()),
                                    source="© OpenStreetMaps bidragsgivare, ODbL"), separators=(",", ":")))
