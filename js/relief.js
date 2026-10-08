@@ -10,6 +10,8 @@
 // Kontrast, skuggornas längd och glitter följer våghöjden från SWAN och läet på varje plats, så att
 // högre sjö syns tydligt. Ljuset kommer från nordväst som på terrängen; varje kam kastar en kort skugga.
 // Över 6 m/s bryter de högsta kammarna och lämnar skumspår; mot exponerade stränder blir det bränningar.
+// I lä blir ytan blank med mjuka, långsamma reflexer, och när det blåser lite driver fält av små
+// krusningar (mörkare, mattare fläckar) över den i vindens riktning.
 const OCT0=-2,OCT1=6,PER=6,NC=(OCT1-OCT0+1)*PER,REL_EX=20;
 const WBASE=(()=>{let s=7;const rnd=()=>{s=(s*16807)%2147483647;return s/2147483647};
   const gs=()=>{let u=0;while(!u)u=rnd();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*rnd())};
@@ -89,6 +91,15 @@ void main(){
     float lc=.55*vn(fx/uLf*7.)+.3*vn(fx/uLf*15.+4.1)+.15*vn(fx/uLf*31.+9.7);
     float foam=(b0*smoothstep(.28,.5,lc)+tr3*smoothstep(.62-.25*tr3,.74-.25*tr3,lc))*smoothstep(.7,1.2,env)*.95*(1.-near)*uX;
     col=mix(col,vec3(.93,.95,.98)*(.86+.14*(1.-shd)),clamp(foam,0.,.92));}
+  // lä: blank yta med långsamma reflexer, och fält av små krusningar som driver med vinden
+  float lee=1.-smoothstep(.05,.2,H);
+  if(lee>.01){vec2 dr=tr*(.06*uU)*uT;                                 // krusningsfälten driver med vinden
+    vec2 pp=(x-dr)/(uLf*7.);float paw=smoothstep(.52,.74,.6*vn(pp)+.4*vn(pp*2.3+5.1))*smoothstep(1.5,4.,uU);
+    float fine=.5*vn((x-dr*1.6)/(uLf*.55))+.5*vn((x-dr*1.6)/(uLf*.27)+9.);
+    float refl=.6*vn(x/(uLf*22.)+vec2(uT*.004,0.))+.4*vn(x/(uLf*9.)-vec2(0.,uT*.006));
+    vec3 glass=vec3(.418,.552,.720)+vec3(.05,.05,.04)*(refl-.5);       // blankt: ljusare, som speglad himmel
+    vec3 ruff=mix(vec3(.322,.448,.612),vec3(.360,.488,.655),fine);     // krusning: mörkare och mattare
+    col=mix(col,mix(glass,ruff,paw),lee);}
   // bränningar mot exponerade stränder och en sköljzon längs strandkanten
   float expo=length(gd)>.002?smoothstep(.45,.9,dot(tr,-normalize(gd))):0.;
   float hs=smoothstep(.25,.6,H);
@@ -155,7 +166,8 @@ function landDist(R,cx0,cy0,W0,H0){const n=W0*H0,D=new Float32Array(n),INF=1e9;
   for(let y=H0-1;y>=0;y--)for(let x=W0-1;x>=0;x--){const i=y*W0+x;let d=D[i];if(!d)continue;
     if(x<W0-1)d=Math.min(d,D[i+1]+3);if(y<H0-1){d=Math.min(d,D[i+W0]+3);if(x<W0-1)d=Math.min(d,D[i+W0+1]+4);if(x>0)d=Math.min(d,D[i+W0-1]+4)}D[i]=d}
   for(let i=0;i<n;i++)D[i]=D[i]>=INF?1e4:D[i]/3;return D}
-async function reliefShow(R,cx0,cy0,W0,H0,k,mz,Hc,wd,U){const name=fasName(wd),imgs=await fasImg(name);if(!imgs){WG.ok=false;reliefHide();schedule();return}
+async function reliefShow(R,cx0,cy0,W0,H0,k,mz,Hc,wd,U){const name=fasName(wd),imgs=await fasImg(name);
+  if(!imgs){fasImgs.delete(name);reliefHide();return}                  // kunde inte laddas (t.ex. dålig täckning): försök igen nästa gång
   const px0=R.px0+cx0,py0=R.py0+cy0,b=L.latLngBounds(CRS.pointToLatLng(L.point(px0,py0+H0),mz),CRS.pointToLatLng(L.point(px0+W0,py0),mz));
   let o=overlays.relief;if(!o){o=overlays.relief=new CanvasOverlay("",b,{pane:"relief",interactive:false}).addTo(map)}else o.setBounds(b);
   const c=o.getElement();c.style.display="";
