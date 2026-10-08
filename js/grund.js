@@ -15,9 +15,11 @@ const osm=L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:
 map.attributionControl.addAttribution("© OpenStreetMap");
 function syncBase(){const karta=S.land==="karta";if(karta&&!map.hasLayer(osm))osm.addTo(map);if(!karta&&map.hasLayer(osm))map.removeLayer(osm);
   map.getContainer().style.background=karta?"#ddd":"#AAD3DF"}
-// sjömärken ligger ovanpå alla färgade lager (men under namn och etiketter), så att de alltid syns
+// sjömärken ligger ovanpå alla färgade lager (men under namn och etiketter), så att de alltid syns.
+// De läggs till först när land och kustlinje har ritats (se redraw), så att kartan byggs upp i ordning:
+// land, sjömärken, sedan vind och vågor.
 map.createPane("seamarks").style.zIndex=380; map.getPane("seamarks").style.pointerEvents="none";
-L.tileLayer("https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png",{pane:"seamarks",maxZoom:18,attribution:"Sjömärken © OpenSeaMap · SMHI · Copernicus Marine · EMODnet"}).addTo(map);
+const seamarkLayer=L.tileLayer("https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png",{pane:"seamarks",maxZoom:18,attribution:"Sjömärken © OpenSeaMap · SMHI · Copernicus Marine · EMODnet"});
 // Linjal: randig skala med jämna avstånd, som på ett sjökort
 (()=>{const st=document.createElement("style");st.textContent=`.ruler{margin:calc(110px + env(safe-area-inset-top,0px)) 0 0 10px!important;padding:5px 8px 4px;background:rgba(255,255,255,.88);border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.25);font:600 11px/1 system-ui,-apple-system,Segoe UI,sans-serif;color:#14222B;pointer-events:none}
 .ruler .rb{display:flex;height:6px;border:1.5px solid #14222B;box-sizing:content-box}.ruler .rb i{flex:1;background:#14222B}.ruler .rb i:nth-child(even){background:#fff}
