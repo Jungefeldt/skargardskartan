@@ -17,6 +17,8 @@ let tRange=null,tStep=0.5,laT=null;
 function chooseStep(r){return r<=6?1:2}
 const fmtStep=v=>(Math.round(v*100)/100).toString().replace(".",",");
 let seq=0,busy=false,again=false;
+// släpper fram webbläsaren mellan tunga steg, så att vågor och pilar fortsätter röra sig under omräkningen
+const yieldUI=()=>new Promise(r=>setTimeout(r,0));
 async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
   try{lblLayer.clearLayers();zoneLayer.clearLayers();seaLayer.clearLayers();
     const Lyr=S.layers,F_=S.find,needLa=Lyr.la||F_.on,needT=Lyr.temp||F_.on,di=needT?tempDay():-1;
@@ -30,20 +32,24 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
       x0=Math.floor(x0);y0=Math.floor(y0);x1=Math.ceil(x1);y1=Math.ceil(y1)}
     const R=await region(mz,x0,y0,x1-x0,y1-y0);if(my!==seq)return;const N=R.W*R.H,WA=R.water;
     lastR=R;
+    // fönstret: det som syns plus en liten marginal; allt som räknas per punkt räknas bara här
+    const wx0=Math.max(0,vx0-R.px0-10),wx1=Math.min(R.W,vx1-R.px0+10),wy0=Math.max(0,vy0-R.py0-10),wy1=Math.min(R.H,vy1-R.py0+10),win=[wx0,wx1,wy0,wy1];
+    let nwi=0;const WI=new Int32Array(Math.max(0,(wx1-wx0)*(wy1-wy0)));for(let y=wy0;y<wy1;y++){const o=y*R.W;for(let x=wx0;x<wx1;x++)if(WA[o+x])WI[nwi++]=o+x}
     // kustlinje: skarp vektorlinje i skärmens upplösning, som på ett sjökort
-    await drawCoast();if(my!==seq)return;
+    await drawCoast();if(my!==seq)return;await yieldUI();
     if(!haveLa&&!haveT&&!privOn&&!(S.depth&&Lyr.depth)){hideCanvas();hideCanvas("zones");hideCanvas("crests");crestSet=null;reliefHide();laR=null;laT=null;drawArrows(placeNames(),true);legend();if(sel)sheet();return}
     // lä
     // riktningen avrundas till 5 grader; samma vy och riktning återanvänder beräkningen (snabb uppspelning)
     let F=null;if(haveLa){const dr=Math.round(w.wd/5)*5,key=[mz,R.px0,R.py0,R.W,R.H,dr].join("|");
-      if(fetchCache.key===key)F=fetchCache.F;else{const A=fetchPass(R,dr-20,cap),B=fetchPass(R,dr,cap),C=fetchPass(R,dr+20,cap);F=new Float32Array(N);for(let i=0;i<N;i++)F[i]=(A[i]+2*B[i]+C[i])/4*m;fetchCache={key,F}}}
+      if(fetchCache.key===key)F=fetchCache.F;else{const A=fetchPass(R,dr-20,cap),B=fetchPass(R,dr,cap),C=fetchPass(R,dr+20,cap);F=new Float32Array(N);for(let i=0;i<N;i++)F[i]=(A[i]+2*B[i]+C[i])/4*m;fetchCache={key,F};await yieldUI()}}
     laR=haveLa?R:null;laF=F;laWind=haveLa?w:null;
     let UF=null;if(haveLa){UF=new Float32Array(N);if(S.src==="egen")UF.fill(S.own.sp);else{const st=64,gw=Math.ceil(R.W/st)+1,gh=Math.ceil(R.H/st)+1,G2=new Float32Array(gw*gh);
-        for(let gy=0;gy<gh;gy++)for(let gx=0;gx<gw;gx++){const ll=CRS.pointToLatLng(L.point(R.px0+gx*st,R.py0+gy*st),mz),lw=windAt(ll.lat,ll.lng,S.ti);G2[gy*gw+gx]=lw&&lw.ws!=null?calcU(lw):calcU(w)}
-        for(let y=0;y<R.H;y++){const fy=y/st,y0=fy|0,ty=fy-y0,y1=Math.min(gh-1,y0+1);for(let x=0;x<R.W;x++){const fx=x/st,x0=fx|0,tx=fx-x0,x1=Math.min(gw-1,x0+1);
+        for(let gy=Math.floor(wy0/st);gy<=Math.min(gh-1,Math.ceil(wy1/st));gy++)for(let gx=Math.floor(wx0/st);gx<=Math.min(gw-1,Math.ceil(wx1/st));gx++){const ll=CRS.pointToLatLng(L.point(R.px0+gx*st,R.py0+gy*st),mz),lw=windAt(ll.lat,ll.lng,S.ti);G2[gy*gw+gx]=lw&&lw.ws!=null?calcU(lw):calcU(w)}
+        for(let y=wy0;y<wy1;y++){const fy=y/st,y0=fy|0,ty=fy-y0,y1=Math.min(gh-1,y0+1);for(let x=wx0;x<wx1;x++){const fx=x/st,x0=fx|0,tx=fx-x0,x1=Math.min(gw-1,x0+1);
           UF[y*R.W+x]=(G2[y0*gw+x0]*(1-tx)+G2[y0*gw+x1]*tx)*(1-ty)+(G2[y1*gw+x0]*(1-tx)+G2[y1*gw+x1]*tx)*ty}}}}
     // lä bakom öar och skog: vinden dämpas där land och träd skymmer i vindens riktning
-    let LF=null;if(haveLa&&S.vind){LF=await leeField(R,mz,w.wd);if(my!==seq)return;if(LF)for(let i=0;i<N;i++)if(WA[i])UF[i]*=LF[i]}
+    let LF=null;if(haveLa&&S.vind){LF=await leeField(R,mz,w.wd,win);if(my!==seq)return;if(LF)for(let q=0;q<nwi;q++){const i=WI[q];UF[i]*=LF[i]}}
+    await yieldUI();
     laU=UF;laLee=LF;
     // vattentemperatur per pixel
     let TV=null,BAND=null;
@@ -51,12 +57,12 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
       for(let y=0;y<R.H;y++){const lat=CRS.pointToLatLng(L.point(R.px0,R.py0+y+.5),mz).lat;rowFy[y]=Math.max(0,Math.min(G.ny-1,(lat-G.lat0)/G.dlat))}
       for(let x=0;x<R.W;x++){const lon=CRS.pointToLatLng(L.point(R.px0+x+.5,R.py0),mz).lng;colFx[x]=Math.max(0,Math.min(G.nx-1,(lon-G.lon0)/G.dlon))}
       let lo=99,hi=-99;
-      for(let y=0;y<R.H;y++){const fy=rowFy[y],ya=fy|0,yb=Math.min(G.ny-1,ya+1),ty=fy-ya,r0=base+ya*G.nx,r1=base+yb*G.nx,inV=R.py0+y>=vy0&&R.py0+y<vy1;
-        for(let x=0;x<R.W;x++){const i=y*R.W+x;if(!WA[i])continue;const fx=colFx[x],xa=fx|0,xb=Math.min(G.nx-1,xa+1),tx=fx-xa;
+      for(let y=wy0;y<wy1;y++){const fy=rowFy[y],ya=fy|0,yb=Math.min(G.ny-1,ya+1),ty=fy-ya,r0=base+ya*G.nx,r1=base+yb*G.nx,inV=R.py0+y>=vy0&&R.py0+y<vy1;
+        for(let x=wx0;x<wx1;x++){const i=y*R.W+x;if(!WA[i])continue;const fx=colFx[x],xa=fx|0,xb=Math.min(G.nx-1,xa+1),tx=fx-xa;
           const v=(T[r0+xa]*(1-tx)+T[r0+xb]*tx)*(1-ty)+(T[r1+xa]*(1-tx)+T[r1+xb]*tx)*ty;TV[i]=v;
           if(inV&&R.px0+x>=vx0&&R.px0+x<vx1){if(v<lo)lo=v;if(v>hi)hi=v}}}
       if(lo>hi){lo=hi=TV.find(v=>v)||0}
-      tRange=[lo,hi];tStep=chooseStep(hi-lo);BAND=new Int16Array(N);for(let i=0;i<N;i++)BAND[i]=WA[i]?Math.floor(TV[i]/tStep):-999;
+      tRange=[lo,hi];tStep=chooseStep(hi-lo);BAND=new Int16Array(N).fill(-999);for(let q=0;q<nwi;q++){const i=WI[q];BAND[i]=Math.floor(TV[i]/tStep)}
       {const smin=Math.floor(lo)-1,smax=Math.ceil(hi)+1;for(const id of ["tmin","tmax"]){$(id).min=smin;$(id).max=smax}}
       if(S.find.tmin==null){S.find.tmin=Math.floor(lo);S.find.tmax=Math.ceil(hi);syncFind()}}
     laT=TV;
@@ -66,25 +72,26 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     if(needD){const G=S.depth,Dg=G.D,GW=G.nx,rowF=new Float32Array(R.H),colF=new Float32Array(R.W);DV=new Float32Array(N);DB=new Int16Array(N).fill(-999);
       for(let y=0;y<R.H;y++){const lat=CRS.pointToLatLng(L.point(R.px0,R.py0+y+.5),mz).lat;rowF[y]=Math.max(0,Math.min(G.ny-1.001,(lat-G.lat0)/G.dlat))}
       for(let x=0;x<R.W;x++){const lon=CRS.pointToLatLng(L.point(R.px0+x+.5,R.py0),mz).lng;colF[x]=Math.max(0,Math.min(G.nx-1.001,(lon-G.lon0)/G.dlon))}
-      for(let y=0;y<R.H;y++){const fy=rowF[y],ya=fy|0,ty=fy-ya,r0=ya*GW,r1=r0+GW;for(let x=0;x<R.W;x++){const i=y*R.W+x;if(!WA[i])continue;const fx=colF[x],xa=fx|0,tx=fx-xa;
+      for(let y=wy0;y<wy1;y++){const fy=rowF[y],ya=fy|0,ty=fy-ya,r0=ya*GW,r1=r0+GW;for(let x=wx0;x<wx1;x++){const i=y*R.W+x;if(!WA[i])continue;const fx=colF[x],xa=fx|0,tx=fx-xa;
           const d=((Dg[r0+xa]*(1-tx)+Dg[r0+xa+1]*tx)*(1-ty)+(Dg[r1+xa]*(1-tx)+Dg[r1+xa+1]*tx)*ty)/2;DV[i]=d;DB[i]=depthBand(d)}}}
     // SWAN-fält för vågmönstret, om det finns för området
-    let SW=null;if(patMode&&S.swan){const C=await swanCase(w.wd,S.src==="egen"?S.own.sp:calcU(w));if(my!==seq)return;if(C){SW=swanSample(R,mz,C);SW.dir=C.dir;
+    let SW=null;if(patMode&&S.swan){const C=await swanCase(w.wd,S.src==="egen"?S.own.sp:calcU(w));if(my!==seq)return;if(C){SW=swanSample(R,mz,C,win);SW.dir=C.dir;
         // utanför SWAN-området: våghöjd från den enklare beräkningen och vågriktning efter vinden
-        for(let i=0;i<N;i++)if(WA[i]&&SW.H[i]<0){SW.H[i]=wave(UF[i],F[i]);SW.D[i]=w.wd;SW.T[i]=-1}
+        for(let q=0;q<nwi;q++){const i=WI[q];if(SW.H[i]<0){SW.H[i]=wave(UF[i],F[i]);SW.D[i]=w.wd;SW.T[i]=-1}}
         // SWAN räknar med samma vind överallt; i vindlä bakom land och skog blir vågorna lägre
-        if(LF)for(let i=0;i<N;i++)if(SW.T[i]>=0&&SW.H[i]>0)SW.H[i]*=LF[i]}}
+        if(LF)for(let q=0;q<nwi;q++){const i=WI[q];if(SW.T[i]>=0&&SW.H[i]>0)SW.H[i]*=LF[i]}}
+      await yieldUI()}
     lastSW=SW?{R,mz,...SW}:null;
     // klasser per vattenpunkt (används både för ytorna och etiketterna)
     const showLa=haveLa&&Lyr.la,showT=haveT&&Lyr.temp,findOn=F_.on&&haveLa&&haveT;
     const HS=i=>SW&&SW.H[i]>=0?SW.H[i]:wave(UF[i],F[i]);
     let KARR=null,FOK=null;
-    if(showLa&&!findOn){KARR=new Int16Array(N).fill(-999);for(let i=0;i<N;i++){if(!WA[i])continue;let k=0;const h=HS(i);while(h>=LA_CLASSES[k][0])k++;KARR[i]=k}}
-    if(findOn){FOK=new Int16Array(N).fill(-999);for(let i=0;i<N;i++){if(!WA[i])continue;let k=0;const h=wave(UF[i],F[i]);while(h>=LA_CLASSES[k][0])k++;const tv=TV[i];
+    if(showLa&&!findOn){KARR=new Int16Array(N).fill(-999);for(let q=0;q<nwi;q++){const i=WI[q];let k=0;const h=HS(i);while(h>=LA_CLASSES[k][0])k++;KARR[i]=k}}
+    if(findOn){FOK=new Int16Array(N).fill(-999);for(let q=0;q<nwi;q++){const i=WI[q];let k=0;const h=wave(UF[i],F[i]);while(h>=LA_CLASSES[k][0])k++;const tv=TV[i];
         FOK[i]=k<=F_.maxK&&tv>=F_.tmin&&tv<=F_.tmax&&!(S.privOk&&R.priv[i])&&(!useDF||(DV[i]>=F_.dmin&&DV[i]<=F_.dmax))?1:0}}
     hideCanvas();
     const showD=!!(S.depth&&Lyr.depth&&DB),pat=patMode&&!!KARR;
-    let RELIEF=null;if(pat&&S.wstyle==="rorlig"&&reliefPossible(w.wd)){RELIEF=new Float32Array(N);for(let i=0;i<N;i++)if(WA[i])RELIEF[i]=HS(i)}
+    let RELIEF=null;if(pat&&S.wstyle==="rorlig"&&reliefPossible(w.wd)){RELIEF=new Float32Array(N);for(let q=0;q<nwi;q++){const i=WI[q];RELIEF[i]=HS(i)}}
     drawZones(R,vx0,vy0,vx1,vy1,mz,{RELIEF,FOK,KARR:pat?null:KARR,KPAT:pat?KARR:null,BAND:(showT||findOn)?BAND:null,
       tempFill:showT&&!showLa&&!findOn&&!showD,wdir:w?w.wd:null,wspd:w?(S.src==="egen"?S.own.sp:calcU(w)):null,SW:pat?SW:null,FV:pat?F:null,UV:pat?UF:null,mpz:m,DB:showD?DB:null,depthFill:showD&&((!showLa&&!findOn)||pat),priv:privOn?R.priv:null});
     // etiketter: namn först, sedan vindpilar, vattentemperatur och sjögång, utan krockar
