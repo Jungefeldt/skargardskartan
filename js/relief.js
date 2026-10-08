@@ -96,7 +96,7 @@ void main(){
   // bränningar mot exponerade stränder och en sköljzon längs strandkanten
   float expo=length(gd)>.002?smoothstep(.45,.9,dot(tr,-normalize(gd))):0.;
   float hs=smoothstep(.25,.6,H);
-  float zone=1.-smoothstep(0.,8.+22.*H,dist),swash=1.-smoothstep(0.,4.+10.*H,dist);
+  float zone=1.-smoothstep(0.,3.+5.*H,dist),swash=1.-smoothstep(0.,1.5+2.5*H,dist);   // några meter, som vid en klippstrand
   float shore=expo*hs*zone;
   if(shore>.01){vec2 fp=vec2(dot(x,tr)/lam*5.-uT*.5,dot(x,cr)/lam*5.);float l1=lace(fp),l2=lace(fp*2.1+3.3);
     float brk=shore*(.7*smoothstep(.3,1.,e)*smoothstep(.45,.65,l1)+.25*smoothstep(.6,.78,l2));
