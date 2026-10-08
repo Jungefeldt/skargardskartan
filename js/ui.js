@@ -40,7 +40,8 @@ function arrowAt(key,ll,wd,ws,gust,big){const s=big?44:36,c=windCol(ws),o=ARW.ge
   sv.style.transform=`rotate(${ang}deg)`;pa.style.fill=c;sp.style.borderColor=c;
   em.textContent=windTerm(ws).replace(" vind","").toLowerCase();
   cancelAnimationFrame(o.raf);const w0=o.cw,g0=o.cg,t0=performance.now();
-  const step=now=>{let f=Math.min(1,(now-t0)/ms);if(!playing)f=f*f*(3-2*f);
+  // samma klocka hela vägen och andelen alltid mellan 0 och 1 (bildklockan kan ligga före t0)
+  const step=()=>{let f=Math.max(0,Math.min(1,(performance.now()-t0)/ms));if(!playing)f=f*f*(3-2*f);
     o.cw=w0+(ws-w0)*f;o.cg=g0!=null&&gust!=null?g0+(gust-g0)*f:gust;bb.textContent=arrowNum(o.cw,o.cg);
     o.raf=f<1?requestAnimationFrame(step):0};
   o.raf=requestAnimationFrame(step);o.ang=ang;o.ws=ws;o.gust=gust}
