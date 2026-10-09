@@ -3,7 +3,8 @@
 osm_detalj.py
 
 Detaljer för land från OpenStreetMap: hus (som ytor), bryggor och pirar, vägar och stigar, samt
-marktyper (bebyggelse, skog, öppen mark, åker, berg i dagen, våtmark, strand). Används för att rita
+marktyper (bebyggelse, skog, öppen mark, åker, berg i dagen, våtmark, strand) och vassbälten
+(natural=wetland + wetland=reedbed, inritade från flygbilder). Används för att rita
 en karta i Lantmäteriets stil ovanpå appens egen kustlinje och terräng.
 
 Hämtas i små rutor från Overpass, så att servrarna inte överbelastas. Varje färdig ruta sparas för
@@ -18,7 +19,7 @@ import time
 from common import BOUNDS, DATA
 
 OUT = DATA / "osm" / "detalj.json"
-VERSION = 2
+VERSION = 3
 MAX_AGE_DAYS = 7
 NX, NY = 6, 4                      # rutor över området
 PARTS = DATA / "osm" / "delar"     # färdiga rutor sparas här, så att nästa körning fortsätter där den slutade
@@ -112,6 +113,8 @@ def build(budget_s=6 * 60):
                 kind, cls = "p", 0
             elif t.get("highway") in ROADS:
                 kind, cls = "v", ROADS[t["highway"]]
+            elif t.get("natural") == "wetland" and t.get("wetland") == "reedbed":
+                kind, cls = "l", "vass"
             else:
                 cls = next((v for (k, val), v in LAND.items() if t.get(k) == val), None)
                 kind = "l"
