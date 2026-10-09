@@ -305,7 +305,7 @@ function placeNames(){nameLayer.clearLayers();const boxes=uiBoxes();
 // typ: [symbol, färg, från zoom, prioritet, namn från zoom]
 const POI={farja:["⛴","#1F5F82",13,9,15],hamn:["⚓","#1F5F82",13,8,15],ramp:["⛵","#1F5F82",14,7,99],bransle:["⛽","#B0412E",14,7,16],
   affar:["🛒","#7A5A2E",14,6,15],mat:["🍴","#7A5A2E",15,5,16],bad:["🏊","#2E86B0",15,4,99],camping:["⛺","#3E7A3A",15,4,16],
-  boende:["🛏","#7A5A2E",15,3,16],wc:["WC","#555",16,2,99],parkering:["P","#3A5FA8",16,1,99]};
+  boende:["🛏","#7A5A2E",15,3,16],wc:["WC","#555",15,2,99],parkering:["P","#3A5FA8",15,1,99]};
 const mercLL=(mx,my)=>L.latLng(Math.atan(Math.sinh(Math.PI*(1-2*my)))*180/Math.PI,mx*360-180);
 const esc=s=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
 function detailCands(){const O=S.osm,z=map.getZoom(),b=map.getBounds(),N=256*Math.pow(2,z),out=[];
