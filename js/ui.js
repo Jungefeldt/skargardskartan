@@ -54,7 +54,7 @@ function legend(){const L_=$("legend"),w=laWind||domainWind(S.ti);let h="";
   else if(S.layers.temp&&tRange)h+=`<div class="grad" style="background:linear-gradient(90deg,${TSTOPS.map(s=>s[1]+" "+(s[0]/24*100)+"%").join(",")})"></div><div class="gl"><span>0</span><span>6</span><span>12</span><span>18</span><span>24 °C</span></div>`;
   if((S.layers.la||S.find.on)&&w)h=`<span><b>${dirName(w.wd)} ${f0(w.ws)} m/s${w.gust!=null?", byar "+f0(w.gust):""}</b>${S.src==="prognos"?" (medel för området) · räknat på "+(S.basis==="byar"&&w.gust!=null?"byar":"medelvind"):""}</span>`+h;
   if(S.privOk&&S.layers.priv)h+=`<span><i style="background:rgba(70,56,50,.65);border:2px solid #281E1C"></i>Inom ${S.privM} m från brygga eller hus</span>`;
-  if(S.depth&&S.layers.depth)h+=`<span style="flex:1 1 100%">Djup (ungefärligt): `+DEPTH_STEPS.map((d,k)=>`<i style="background:${DEPTH_COL[k]};margin:0 3px 0 6px"></i>${k===DEPTH_STEPS.length-1?d+"+":d}`).join("")+` m</span>`;
+  if((S.depth||S.depthP)&&S.layers.depth)h+=`<span style="flex:1 1 100%">Djup${S.depthP?" (eget djup där det finns, annars ungefärligt)":" (ungefärligt)"}: `+DEPTH_STEPS.map((d,k)=>`<i style="background:${DEPTH_COL[k]};margin:0 3px 0 6px"></i>${k===DEPTH_STEPS.length-1?d+"+":d}`).join("")+` m</span>`;
   if(S.layers.arrows)h+=`<span style="flex:1 1 100%">Vindpilar: `+[["svag",0],["måttlig",4],["frisk",8],["hård",14],["mycket hård",20]].map(x=>`<i style="background:${windCol(x[1])};margin:0 3px 0 6px;border-radius:50%;width:10px"></i>${x[0]}`).join("")+`</span>`;
   if((S.layers.temp||S.find.on)&&tRange)h+=`<span><i style="background:#0B3550;height:2px;border:0"></i>Vattentemp, zoner om ${tStep} °C (${f0(tRange[0])} till ${f0(tRange[1])} här)</span>`;
   if(S.sat&&S.satMeta){const M=S.satMeta,ds=M.bilder.map(b=>b.datum).sort(),d=new Date(ds[ds.length-1]),dt=d.getDate()+" "+MON[d.getMonth()],
@@ -109,6 +109,7 @@ $("explain").onclick=()=>{let h=`<h3>Färger för lä och sjögång</h3><p class
     <h3>Lä för vinden</h3><p class="note" style="margin-top:2px">Bakom öar, uddar och skog är vinden svagare. Dämpningen räknas från markhöjden i Lantmäteriets höjdmodell och trädhöjden (${S.treesSrc||"skog från OpenStreetMap"}): störst närmast hindret, och vinden är nästan tillbaka efter 20 till 30 gånger hindrets höjd. Uppskruvad vind runt uddar och i smala sund ingår inte.</p>
     <h3>Höjdkurvor och terräng</h3><p class="note" style="margin-top:2px">Höjdkurvorna på land kommer från Lantmäteriets laserskannade höjdmodell. Avståndet mellan kurvorna är 10 m, och 5 m när man zoomat in; var femte kurva är kraftigare. Land skuggas som en terrängkarta med ljuset från nordväst, och skogen syns som gröna, upphöjda partier${S.treesSrc?" (trädhöjd: "+S.treesSrc+")":""}.</p>
     <h3>Detaljkarta och satellit</h3><p class="note" style="margin-top:2px"><b>Detalj</b> ritar hus, bryggor, vägar med namn, stigar, skog, bebyggelse, vassbälten och platser (färjeläge, hamn, båtramp, bränsle, affär, restaurang, badplats med mera) från OpenStreetMap i samma stil som Lantmäteriets karta, ovanpå appens egen kustlinje, och skuggar terrängen från Lantmäteriets höjdmodell och trädhöjden. Hur detaljerat det blir beror på hur väl området är karterat. <b>Satellit</b> visar bilder från Copernicus Sentinel-2 (10 m), där varje punkt tas från den senaste molnfria bilden: <b>Grumligt</b> visar hur mycket rött ljus vattnet reflekterar: slam och plankton ger grumligare vatten, och gränsen mot klart vatten är ofta ett bra fiskeställe. <b>Alger</b> är ett klorofyllindex och säger mest under maj till september.${S.satMeta?" Senaste bild: "+S.satMeta.bilder.map(b=>b.datum).sort().pop()+".":""}</p>
+    <h3>Eget djup</h3><p class="note" style="margin-top:2px">Med <b>Eget djup</b> längst ner i panelen kopplar du in ett eget, privat djup (till exempel uträknat från sjökortsbilder). Det hämtas från ett privat förråd med en nyckel som bara sparas i den här webbläsaren, och används där det finns; utanför används EMODnet.${S.depthP?" Eget djup är kopplat.":""}</p>
     <h3>Djup</h3><p class="note" style="margin-top:2px">Djupzonerna kommer från EMODnet Bathymetry (DTM 2024). I svenska vatten är underlaget medvetet glesat av sekretesskäl, så djupen är ungefärliga: bra för att skilja grunda vikar från djupa fjärdar, men enskilda grund, kanter och smala sund syns inte. "Nära lodning" betyder att det finns en verklig mätning i närheten, "uppskattat" att djupet är uträknat från omgivningen.</p>
     <p class="note">Uppskattningen tar inte hänsyn till dyning, strömmar eller båttrafik, och vågor böjer runt små öar. Använd den som stöd, inte för navigering.</p>`;
   $("sheetc").innerHTML=h;$("sheet").classList.add("open")};
@@ -145,16 +146,36 @@ function sheet(){const ll=sel,W=S.wind,w=W?windAt(ll.lat,ll.lng,S.ti):null,di=te
   const wet=la!=null?la>=0:onWater(ll);
   if(lastSW&&wet){const R2=lastSW.R,p=CRS.latLngToPoint(ll,R2.z),xx=Math.floor(p.x-R2.px0),yy=Math.floor(p.y-R2.py0);
     if(xx>=0&&yy>=0&&xx<R2.W&&yy<R2.H){const i=yy*R2.W+xx;if(lastSW.H[i]>=0&&lastSW.T[i]>=0)h+=`<dt>Vågor (SWAN)</dt><dd>ca ${f1(lastSW.H[i])} m, period ${f1(lastSW.T[i])} s, från ${dirName(lastSW.D[i])}</dd>`}}
-  if(S.depth&&wet){const d=depthAt(ll.lat,ll.lng);if(d!=null)h+=`<dt>Djup</dt><dd>ca ${f0(d)} m <span style="font-weight:500;color:var(--muted)">(${depthMeasured(ll.lat,ll.lng)?"nära lodning":"uppskattat"})</span></dd>`}
+  if((S.depth||S.depthP)&&wet){const own=ownDepth(ll.lat,ll.lng),d=own!=null?own:depthAt(ll.lat,ll.lng);
+    if(d!=null)h+=`<dt>Djup</dt><dd>ca ${own!=null?f1(d):f0(d)} m <span style="font-weight:500;color:var(--muted)">(${own!=null?"eget djup":depthMeasured(ll.lat,ll.lng)?"nära lodning":"uppskattat"})</span></dd>`}
   if(S.find.on&&la!=null&&la>=0&&lu!=null&&wt!=null){let k=0;const hs=wave(lu,la);while(hs>=LA_CLASSES[k][0])k++;const ok=k<=S.find.maxK&&wt>=S.find.tmin&&wt<=S.find.tmax;h+=`<dt>Villkoren</dt><dd>${ok?"uppfylls":"uppfylls inte"}</dd>`}
   h+=`</dl>`;
   if(inPriv(ll))h+=`<p class="warn" style="background:rgba(60,50,45,.1);border-color:#3A322D">Inom ${S.privM} m från brygga eller hus. Här kan det vara hemfridszon, välj gärna en annan plats.</p>`;
   if(w&&la!=null&&la>=0){const g=w.gust!=null?w.gust:w.ws;if(g>=10)h+=`<p class="warn">Byar upp till ${f0(g)} m/s. Även i lä kan byarna slå ner över öarna och ge kraftig drift och snabba vindkast vid båten.</p>`}
   if(W){h+=`<div class="hours">`;for(let i=S.ti;i<W.times.length&&i<S.ti+30;i+=3){const x=windAt(ll.lat,ll.lng,i);if(!x)continue;const d=new Date(W.times[i]);
       h+=`<div>${String(d.getHours()).padStart(2,"0")}<b>${dirName(x.wd)} ${f0(x.ws)}</b>${x.gust!=null?"("+f0(x.gust)+")":""}</div>`}h+=`</div>`}
-  if(S.depth&&wet)h+=`<p class="note">Djupet kommer från EMODnet och är grovt i svenska vatten (underlaget är glesat till ungefär 300 m). Grund och kanter syns inte. Får inte användas för navigering.</p>`;
+  if((S.depth||S.depthP)&&wet)h+=ownDepth(ll.lat,ll.lng)!=null?`<p class="note">Eget djup, uträknat från sjökortsbilder. Mellan djupkurvor och lodade djup är det uppskattat. Får inte användas för navigering.</p>`:`<p class="note">Djupet kommer från EMODnet och är grovt i svenska vatten (underlaget är glesat till ungefär 300 m). Grund och kanter syns inte. Får inte användas för navigering.</p>`;
   if(laR)h+=`<p class="note">Lä räknas från hur mycket öppet vatten som finns mot vinden (inom 6 km). Vågor böjer runt små öar, så verkligt lä är ofta något mindre än kartan visar.</p>`;
   $("sheetc").innerHTML=h;$("sheet").classList.add("open")}
+
+// ------------------------------------------------------------------ eget djup (privat förråd)
+// Djupet ligger i det privata förrådet Jungefeldt/djup-privat och hämtas med en nyckel (fine-grained
+// token med läsrätt till just det förrådet). Nyckeln sparas bara i den här webbläsaren.
+const OWN_DEPTH_URL="https://api.github.com/repos/Jungefeldt/djup-privat/contents/djup.json";
+async function loadOwnDepth(quiet){let t=null;try{t=localStorage.getItem("djupNyckel")}catch(_){}
+  if(!t){S.depthP=null;return}
+  try{const r=await fetch(OWN_DEPTH_URL,{headers:{Authorization:"Bearer "+t,Accept:"application/vnd.github.raw+json"},cache:"no-cache"});
+    if(r.status===401||r.status===403){toast("Nyckeln till eget djup fungerar inte");return}
+    if(r.status===404){toast("Hittar inte djup.json i djup-privat");return}
+    if(!r.ok)throw new Error(r.status);
+    const G=await r.json(),dec=s=>{const b=atob(s),a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a};
+    G.D=dec(G.d);G.M=dec(G.m);delete G.d;delete G.m;S.depthP=G;$("depthchip")&&($("depthchip").hidden=false);$("depthfind")&&($("depthfind").hidden=false);
+    if(!quiet)toast("Eget djup laddat");schedule()}
+  catch(_){if(!quiet)toast("Eget djup kunde inte hämtas")}}
+$("owndepth").onclick=()=>{let cur="";try{cur=localStorage.getItem("djupNyckel")||""}catch(_){}
+  const v=window.prompt(cur?"Eget djup är kopplat. Klistra in en ny nyckel, eller töm fältet för att koppla bort:":"Klistra in nyckeln till det privata djupförrådet (djup-privat):",cur);
+  if(v===null)return;try{if(v.trim())localStorage.setItem("djupNyckel",v.trim());else localStorage.removeItem("djupNyckel")}catch(_){}
+  if(!v.trim()){S.depthP=null;toast("Eget djup bortkopplat");schedule();return}loadOwnDepth()};
 
 // ------------------------------------------------------------------ min position
 let me=null,watch=null;
@@ -180,6 +201,7 @@ $("loc").onclick=()=>{if(me){map.setView(me.getLatLng(),Math.max(map.getZoom(),1
     G.D=dec(G.d);G.M=dec(G.m);delete G.d;delete G.m;S.depth=G}catch(_){$("depthchip")&&($("depthchip").hidden=true);$("depthfind")&&($("depthfind").hidden=true)}
   try{const pi=await getJSON("mask/privat/info.json");S.privOk=true;S.privM=pi.meter||25}catch(_){$("privchip")&&($("privchip").hidden=true)}
   try{const info=await getJSON("mask/info.json");if(info.zooms&&info.zooms.length)MASK_MAX=Math.min(15,Math.max(...info.zooms));const [w,s,e,n]=info.bounds;map.setMaxBounds(L.latLngBounds([s,w],[n,e]).pad(.4))}catch(_){}
+  loadOwnDepth(true);
   try{S.satMeta=await getJSON("data/satellit/satellit.json");$("satrow").hidden=false;
     let sv=null;try{sv=localStorage.getItem("sat")}catch(_){}
     if(sv&&S.satMeta.skalor[sv]&&document.querySelector(`[data-sat="${sv}"]`)){S.sat=sv;document.querySelectorAll("[data-sat]").forEach(x=>x.setAttribute("aria-checked",x.dataset.sat===sv))}drawSat()}catch(_){}
