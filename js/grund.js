@@ -14,7 +14,8 @@ map.attributionControl.setPrefix(false);
 const osm=L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19});
 map.attributionControl.addAttribution("© OpenStreetMap");
 function syncBase(){const karta=S.land==="karta";if(karta&&!map.hasLayer(osm))osm.addTo(map);if(!karta&&map.hasLayer(osm))map.removeLayer(osm);
-  map.getContainer().style.background=karta?"#ddd":"#AAD3DF"}
+  // med rörliga vågor har bakgrunden vågornas färg, så att vattnet har rätt färg innan vågorna ritats
+  map.getContainer().style.background=karta?"#ddd":S.wstyle==="rorlig"?"#5A7BA6":"#AAD3DF"}
 // sjömärken ligger ovanpå alla färgade lager (men under namn och etiketter), så att de alltid syns.
 // De läggs till först när land och kustlinje har ritats (se redraw), så att kartan byggs upp i ordning:
 // land, sjömärken, sedan vind och vågor.
@@ -36,6 +37,7 @@ map.createPane("tint").style.zIndex=300; map.getPane("tint").style.pointerEvents
 map.createPane("zones").style.zIndex=345; map.getPane("zones").style.pointerEvents="none";
 map.createPane("crests").style.zIndex=346; map.getPane("crests").style.pointerEvents="none";
 map.createPane("relief").style.zIndex=347; map.getPane("relief").style.pointerEvents="none";
+map.createPane("sat").style.zIndex=349; map.getPane("sat").style.pointerEvents="none";
 map.createPane("ov").style.zIndex=350; map.getPane("ov").style.pointerEvents="none";
 map.createPane("coast").style.zIndex=360; map.getPane("coast").style.pointerEvents="none";
 map.createPane("lbl").style.zIndex=640; map.getPane("lbl").style.pointerEvents="none";
@@ -48,10 +50,10 @@ function showCanvas(R,draw,pane){pane=pane||"ov";const b=L.latLngBounds(CRS.poin
   let o=overlays[pane];if(!o){o=overlays[pane]=new CanvasOverlay("",b,{pane,interactive:false,opacity:1}).addTo(map)}else o.setBounds(b);
   const c=o.getElement();c.width=R.W;c.height=R.H;const x=c.getContext("2d"),img=x.createImageData(R.W,R.H);draw(img.data);x.putImageData(img,0,0)}
 function hideCanvas(pane){pane=pane||"ov";if(overlays[pane]){map.removeLayer(overlays[pane]);delete overlays[pane]}}
-const LANDCOL={gul:[244,226,160],vit:[246,246,242]};
+const LANDCOL={gul:[244,226,160],vit:[246,246,242],detalj:[255,252,226]};
 
 // ------------------------------------------------------------------ data
-const S={wstyle:"farg",basis:"byar",land:"gul",wind:null,temp:null,T:null,layers:{la:true,temp:false,arrows:true,waves:true,priv:true,names:true,depth:false,contours:true},privOk:false,find:{on:false,maxK:0,tmin:null,tmax:null,dmin:0,dmax:60},src:"prognos",own:{dir:225,sp:8},ti:0};
+const S={wstyle:"farg",basis:"byar",land:"gul",wind:null,temp:null,T:null,layers:{la:true,temp:false,arrows:true,waves:true,priv:true,names:true,depth:false,contours:true},privOk:false,find:{on:false,maxK:0,tmin:null,tmax:null,dmin:0,dmax:60},src:"prognos",own:{dir:225,sp:8},ti:0,sat:null,satMeta:null,osm:null};
 async function getJSON(u){const r=await fetch(u,{cache:"no-cache"});if(!r.ok)throw new Error(u+" "+r.status);return r.json()}
 
 // ------------------------------------------------------------------ land/vatten-mask
