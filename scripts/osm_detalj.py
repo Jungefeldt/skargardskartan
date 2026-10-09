@@ -4,7 +4,8 @@ osm_detalj.py
 
 Detaljer för land från OpenStreetMap: hus (som ytor), bryggor och pirar, vägar och stigar, samt
 marktyper (bebyggelse, skog, öppen mark, åker, berg i dagen, våtmark, strand) och vassbälten
-(natural=wetland + wetland=reedbed, inritade från flygbilder). Används för att rita
+(natural=wetland + wetland=reedbed, inritade från flygbilder), vägnamn och platser (färjeläge, hamn,
+båtramp, bränsle, affär, restaurang, badplats, camping, boende, toalett, parkering). Används för att rita
 en karta i Lantmäteriets stil ovanpå appens egen kustlinje och terräng.
 
 Hämtas i små rutor från Overpass, så att servrarna inte överbelastas. Varje färdig ruta sparas för
@@ -19,7 +20,7 @@ import time
 from common import BOUNDS, DATA
 
 OUT = DATA / "osm" / "detalj.json"
-VERSION = 3
+VERSION = 4
 MAX_AGE_DAYS = 7
 NX, NY = 6, 4                      # rutor över området
 PARTS = DATA / "osm" / "delar"     # färdiga rutor sparas här, så att nästa körning fortsätter där den slutade
@@ -39,6 +40,34 @@ ROADS = {"motorway": 1, "trunk": 1, "primary": 1, "secondary": 1, "tertiary": 2,
          "footway": 4, "path": 4, "cycleway": 4, "bridleway": 4, "steps": 4}
 
 
+def poi(t):
+    """Platstyp för symbolerna i kartan, eller None."""
+    a, le, sh, to = t.get("amenity"), t.get("leisure"), t.get("shop"), t.get("tourism")
+    if a == "ferry_terminal":
+        return "farja"
+    if le == "marina":
+        return "hamn"
+    if le == "slipway":
+        return "ramp"
+    if a == "fuel" or t.get("waterway") == "fuel":
+        return "bransle"
+    if sh in ("supermarket", "convenience"):
+        return "affar"
+    if a in ("restaurant", "cafe"):
+        return "mat"
+    if le == "bathing_place":
+        return "bad"
+    if to == "camp_site":
+        return "camping"
+    if to in ("guest_house", "hotel", "hostel"):
+        return "boende"
+    if a == "toilets":
+        return "wc"
+    if a == "parking":
+        return "parkering"
+    return None
+
+
 def log(*a):
     print(*a, flush=True)
 
@@ -56,6 +85,11 @@ def query(s, w, n, e):
   relation["landuse"~"^(residential|forest|farmland|meadow)$"]{bb};
   relation["natural"~"^(wood|scrub|wetland|bare_rock)$"]{bb};
   relation["building"]{bb};
+  nwr["leisure"~"^(marina|slipway|bathing_place)$"]{bb};
+  nwr["amenity"~"^(ferry_terminal|fuel|restaurant|cafe|toilets|parking)$"]{bb};
+  nwr["shop"~"^(supermarket|convenience)$"]{bb};
+  nwr["tourism"~"^(camp_site|guest_house|hotel|hostel)$"]{bb};
+  node["waterway"="fuel"]{bb};
 );
 out geom qt;"""
 
@@ -97,10 +131,22 @@ def build(budget_s=6 * 60):
         except Exception as ex:  # noqa: BLE001
             log(f"  ruta {i},{j}: {str(ex)[:100]}, försöker igen nästa körning")
             continue
-        # varje objekt: [id, klass, koordinater]; id med ringnummer, så att flerdelade ytor behålls
+        # varje objekt: [id, slag, klass, koordinater, namn]; id med ringnummer, så att flerdelade ytor behålls
         items = []
         for el in els:
             t = el.get("tags", {})
+            pt = poi(t)
+            if pt:                                       # plats: en punkt (mitten av ytan för vägar och ytor)
+                if el["type"] == "node":
+                    lon, lat = el["lon"], el["lat"]
+                else:
+                    g = el.get("geometry") or [p for m in el.get("members", []) for p in (m.get("geometry") or [])]
+                    lon = sum(p["lon"] for p in g) / len(g) if g else None
+                    lat = sum(p["lat"] for p in g) / len(g) if g else None
+                if lon is not None:
+                    items.append([f"q{el['type'][0]}{el['id']}", "q", pt, enc([{"lon": lon, "lat": lat}]), t.get("name", "")])
+                if el["type"] == "node":
+                    continue
             if el["type"] == "way" and el.get("geometry"):
                 geoms = [el["geometry"]]
             elif el["type"] == "relation":
@@ -113,6 +159,8 @@ def build(budget_s=6 * 60):
                 kind, cls = "p", 0
             elif t.get("highway") in ROADS:
                 kind, cls = "v", ROADS[t["highway"]]
+            elif pt and not any(k in t for k in ("landuse", "natural")):
+                continue
             elif t.get("natural") == "wetland" and t.get("wetland") == "reedbed":
                 kind, cls = "l", "vass"
             else:
@@ -122,7 +170,7 @@ def build(budget_s=6 * 60):
                     continue
             for gi, g in enumerate(geoms):
                 if len(g) >= 2:
-                    items.append([f"{el['type'][0]}{el['id']}.{gi}", kind, cls, enc(g)])
+                    items.append([f"{el['type'][0]}{el['id']}.{gi}", kind, cls, enc(g), t.get("name", "") if kind == "v" else ""])
         (PARTS / f"{i}_{j}.json").write_text(json.dumps({"stamp": stamp, "items": items}, separators=(",", ":")))
         log(f"  ruta {i},{j}: {len(items)} objekt")
         time.sleep(1)
@@ -130,19 +178,26 @@ def build(budget_s=6 * 60):
         log("  alla rutor är inte klara än, fortsätter nästa körning")
         return
     # alla rutor klara: lägg ihop (objekt som korsar rutgränser finns i flera rutor och tas bara en gång)
-    out = {"b": [], "p": [], "v": [], "l": []}
+    out = {"b": [], "p": [], "v": [], "l": [], "q": []}
     seen = set()
     for p in sorted(PARTS.glob("*.json")):
-        for oid, kind, cls, c in json.loads(p.read_text())["items"]:
+        for oid, kind, cls, c, name in json.loads(p.read_text())["items"]:
             if oid in seen:
                 continue
             seen.add(oid)
-            out[kind].append(c if kind in ("b", "p") else [cls, c])
+            if kind in ("b", "p"):
+                out[kind].append(c)
+            elif kind == "v":
+                out[kind].append([cls, c, name] if name else [cls, c])
+            elif kind == "q":
+                out[kind].append([cls, c[0], c[1], name])
+            else:
+                out[kind].append([cls, c])
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(dict(out, version=VERSION, bounds=BOUNDS, origin=[w0, s0], scale=SCALE, t=int(time.time()),
                                    source="© OpenStreetMaps bidragsgivare, ODbL"), separators=(",", ":")))
     log(f"Detaljer från OpenStreetMap: {len(out['b'])} hus, {len(out['p'])} bryggor och pirar, "
-        f"{len(out['v'])} vägar och stigar, {len(out['l'])} markytor, {OUT.stat().st_size // 1024} kB")
+        f"{len(out['v'])} vägar och stigar, {len(out['l'])} markytor, {len(out['q'])} platser, {OUT.stat().st_size // 1024} kB")
 
 
 if __name__ == "__main__":
