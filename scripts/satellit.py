@@ -12,6 +12,10 @@ bara över vatten (appens kustmask):
   vass.png        NDVI, (nir - röd) / (nir + röd): vass och vattenväxter lyser starkt i nära infrarött
   grumlighet.png  reflektans i rött: grumligt vatten (slam, plankton) reflekterar mer rött ljus
   alger.png       NDCI, (rött kantband - röd) / (rött kantband + röd): klorofyll, alger
+Efterbearbetning: närmast stranden blandar 10-metersrutorna land och vatten. Vass räknas därför bara
+där ett grönt område är minst ca 30 m brett och når ut från stranden (då behålls hela bältet), och
+grumlighet och alger jämnas ut över ca 30 m utan de närmaste rutorna, som sedan fylls i från
+omgivningen. Utjämningen tar också bort sensorernas ränder.
 Värdena sparas som gråskala 1-255 (0 = ingen data). scen.png anger vilken bild varje punkt kommer
 från, och satellit.json rutnätet, skalorna och bildernas datum.
 """
@@ -26,7 +30,7 @@ from common import BOUNDS, DATA, MASK
 STAC = "https://earth-search.aws.element84.com/v1/search"
 UA = "skargardskartan/1.0 github.com/Jungefeldt/skargardskartan"
 OUTD = DATA / "satellit"
-VERSION = 2
+VERSION = 3
 RES_M = 10
 DAYS = 45
 MAX_SCENES = 6
@@ -109,9 +113,43 @@ def read_band(asset, dst_t, shape, nearest=False):
     return out if nearest else np.where(out > 0, out, np.nan)            # råa pixelvärden
 
 
+def need_scipy():
+    try:
+        import scipy  # noqa: F401
+    except ImportError:
+        import subprocess
+        import sys
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "scipy"], check=True)
+
+
+def clean(prod, wat):
+    """Tar bort blandrutor vid stranden och jämnar ut (se beskrivningen överst)."""
+    import numpy as np
+    from scipy import ndimage
+    dist = ndimage.distance_transform_edt(wat)               # rutor till närmaste land
+    # vass: grönska smalare än ca 30 m (smala kanter längs stranden) tas bort med en morfologisk
+    # öppning; de breda områdena får sedan tillbaka sin kant med ett steg
+    v = prod["vass"]
+    cand = (v > 0.22) & wat
+    st = np.ones((3, 3), dtype=bool)
+    core = ndimage.binary_opening(cand, structure=st, iterations=1)
+    core &= ndimage.binary_dilation(dist >= 2.5, structure=st)   # måste nå ut från stranden
+    keep = ndimage.binary_dilation(core, structure=st) & cand
+    out = {"vass": np.where(keep, v, np.nan)}
+    for k in ("grumlighet", "alger"):
+        x = np.where(dist >= 2.5, prod[k], np.nan)
+        ok = np.isfinite(x)
+        num = ndimage.gaussian_filter(np.where(ok, x, 0.0), 3)
+        den = ndimage.gaussian_filter(ok.astype(float), 3)
+        sm = np.where(den > 0.05, num / np.maximum(den, 1e-6), np.nan)
+        out[k] = np.where(wat & np.isfinite(prod[k]), sm, np.nan)
+    return out
+
+
 def build(budget_s=8 * 60):
     import lm_coast
     lm_coast.need_rasterio()
+    need_scipy()
     import numpy as np
     from PIL import Image
     from rasterio.transform import from_origin
@@ -170,6 +208,7 @@ def build(budget_s=8 * 60):
         log("  ingen användbar bild, försöker igen nästa körning")
         return
     OUTD.mkdir(parents=True, exist_ok=True)
+    prod = clean(prod, wat)
     for k, (lo, hi) in SCALES.items():
         v = prod[k]
         q = np.where(np.isfinite(v), np.clip(np.round((v - lo) / (hi - lo) * 254) + 1, 1, 255), 0).astype(np.uint8)
