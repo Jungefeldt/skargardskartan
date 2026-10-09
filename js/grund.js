@@ -141,11 +141,15 @@ const f0=v=>v==null||isNaN(v)?"–":String(Math.round(v));
 const DEPTH_STEPS=[0,3,6,10,15,20,30,50],DEPTH_COL=["#86BDE4","#A2CDEC","#BCDBF1","#D1E7F5","#E1EFF8","#ECF5FA","#F4F9FC","#FAFCFD"];
 const depthBand=d=>{let k=0;while(k<DEPTH_STEPS.length-1&&d>=DEPTH_STEPS[k+1])k++;return k};
 const depthTxt=k=>k===DEPTH_STEPS.length-1?`över ${DEPTH_STEPS[k]} m`:`${DEPTH_STEPS[k]}–${DEPTH_STEPS[k+1]} m`;
-function depthAt(lat,lon){const G=S.depth;if(!G)return null;let fy=(lat-G.lat0)/G.dlat,fx=(lon-G.lon0)/G.dlon;if(fy<0||fx<0||fy>G.ny-1||fx>G.nx-1)return null;
+function gridDepth(G,lat,lon){if(!G)return null;let fy=(lat-G.lat0)/G.dlat,fx=(lon-G.lon0)/G.dlon;if(fy<0||fx<0||fy>G.ny-1||fx>G.nx-1)return null;
   const y0=fy|0,x0=fx|0,y1=Math.min(G.ny-1,y0+1),x1=Math.min(G.nx-1,x0+1),ty=fy-y0,tx=fx-x0,D=G.D,W=G.nx;
   return((D[y0*W+x0]*(1-tx)+D[y0*W+x1]*tx)*(1-ty)+(D[y1*W+x0]*(1-tx)+D[y1*W+x1]*tx)*ty)/2}
-function depthMeasured(lat,lon){const G=S.depth;if(!G)return false;const y=Math.round((lat-G.lat0)/G.dlat),x=Math.round((lon-G.lon0)/G.dlon);
+function gridMeasured(G,lat,lon){if(!G)return false;const y=Math.round((lat-G.lat0)/G.dlat),x=Math.round((lon-G.lon0)/G.dlon);
   if(y<0||x<0||y>=G.ny||x>=G.nx)return false;const i=y*G.nx+x;return !!(G.M[i>>3]&(128>>(i&7)))}
+// Eget djup (privat, från sjökortsbilder) används där det finns, annars EMODnet
+const ownDepth=(lat,lon)=>S.depthP&&gridMeasured(S.depthP,lat,lon)?gridDepth(S.depthP,lat,lon):null;
+function depthAt(lat,lon){const d=ownDepth(lat,lon);return d!=null?d:gridDepth(S.depth,lat,lon)}
+function depthMeasured(lat,lon){return gridMeasured(S.depth,lat,lon)}
 
 // ------------------------------------------------------------------ SWAN
 // Vågfält beräknade med vågmodellen SWAN för ett antal vindriktningar och vindstyrkor.
