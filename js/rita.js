@@ -39,7 +39,7 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     await drawCoast();if(my!==seq)return;await yieldUI();
     // första gången: sjömärkena efter land, och vågor och vind först när sjömärkena har laddat (högst 1,5 s)
     if(!map.hasLayer(seamarkLayer)){seamarkLayer.addTo(map);await new Promise(r=>{let d=false;const f=()=>{if(!d){d=true;r()}};seamarkLayer.once("load",f);setTimeout(f,1500)})}
-    if(!haveLa&&!haveT&&!privOn&&!(S.depth&&Lyr.depth)){hideCanvas();hideCanvas("zones");hideCanvas("crests");crestSet=null;reliefHide();laR=null;laT=null;drawArrows(placeNames(),true);legend();if(sel)sheet();return}
+    if(!haveLa&&!haveT&&!privOn&&!((S.depth||S.depthP)&&Lyr.depth)){hideCanvas();hideCanvas("zones");hideCanvas("crests");crestSet=null;reliefHide();laR=null;laT=null;drawArrows(placeNames(),true);legend();if(sel)sheet();return}
     // lä
     // riktningen avrundas till 5 grader; samma vy och riktning återanvänder beräkningen (snabb uppspelning)
     let F=null;if(haveLa){const dr=Math.round(w.wd/5)*5,key=[mz,R.px0,R.py0,R.W,R.H,dr].join("|");
@@ -70,12 +70,18 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     laT=TV;
     // djup per vattenpunkt (för djupskiktet och djupfiltret i Hitta plats)
     const patMode=(S.wstyle==="monster"||S.wstyle==="rorlig")&&haveLa&&Lyr.la&&!F_.on;
-    const useDF=F_.on&&S.depth&&(F_.dmin>0||F_.dmax<60),needD=S.depth&&(Lyr.depth||useDF);let DV=null,DB=null;
-    if(needD){const G=S.depth,Dg=G.D,GW=G.nx,rowF=new Float32Array(R.H),colF=new Float32Array(R.W);DV=new Float32Array(N);DB=new Int16Array(N).fill(-999);
+    const hasD=!!(S.depth||S.depthP),useDF=F_.on&&hasD&&(F_.dmin>0||F_.dmax<60),needD=hasD&&(Lyr.depth||useDF);let DV=null,DB=null;
+    if(needD){DV=new Float32Array(N);DB=new Int16Array(N).fill(-999)}
+    if(needD&&S.depth){const G=S.depth,Dg=G.D,GW=G.nx,rowF=new Float32Array(R.H),colF=new Float32Array(R.W);
       for(let y=0;y<R.H;y++){const lat=CRS.pointToLatLng(L.point(R.px0,R.py0+y+.5),mz).lat;rowF[y]=Math.max(0,Math.min(G.ny-1.001,(lat-G.lat0)/G.dlat))}
       for(let x=0;x<R.W;x++){const lon=CRS.pointToLatLng(L.point(R.px0+x+.5,R.py0),mz).lng;colF[x]=Math.max(0,Math.min(G.nx-1.001,(lon-G.lon0)/G.dlon))}
       for(let y=wy0;y<wy1;y++){const fy=rowF[y],ya=fy|0,ty=fy-ya,r0=ya*GW,r1=r0+GW;for(let x=wx0;x<wx1;x++){const i=y*R.W+x;if(!WA[i])continue;const fx=colF[x],xa=fx|0,tx=fx-xa;
           const d=((Dg[r0+xa]*(1-tx)+Dg[r0+xa+1]*tx)*(1-ty)+(Dg[r1+xa]*(1-tx)+Dg[r1+xa+1]*tx)*ty)/2;DV[i]=d;DB[i]=depthBand(d)}}}
+    // eget djup (privat, från sjökortsbilder) ersätter EMODnet där det finns
+    if(needD&&S.depthP){const lat=new Float64Array(R.H),lon=new Float64Array(R.W);
+      for(let y=wy0;y<wy1;y++)lat[y]=CRS.pointToLatLng(L.point(R.px0,R.py0+y+.5),mz).lat;
+      for(let x=wx0;x<wx1;x++)lon[x]=CRS.pointToLatLng(L.point(R.px0+x+.5,R.py0),mz).lng;
+      for(let q=0;q<nwi;q++){const i=WI[q],y=(i/R.W)|0,x=i-y*R.W,d=ownDepth(lat[y],lon[x]);if(d!=null){DV[i]=d;DB[i]=depthBand(d)}}}
     // SWAN-fält för vågmönstret, om det finns för området
     let SW=null;if(patMode&&S.swan){const C=await swanCase(w.wd,S.src==="egen"?S.own.sp:calcU(w));if(my!==seq)return;if(C){SW=swanSample(R,mz,C,win);SW.dir=C.dir;
         // utanför SWAN-området: våghöjd från den enklare beräkningen och vågriktning efter vinden
@@ -92,7 +98,7 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     if(findOn){FOK=new Int16Array(N).fill(-999);for(let q=0;q<nwi;q++){const i=WI[q];let k=0;const h=wave(UF[i],F[i]);while(h>=LA_CLASSES[k][0])k++;const tv=TV[i];
         FOK[i]=k<=F_.maxK&&tv>=F_.tmin&&tv<=F_.tmax&&!(S.privOk&&R.priv[i])&&(!useDF||(DV[i]>=F_.dmin&&DV[i]<=F_.dmax))?1:0}}
     hideCanvas();
-    const showD=!!(S.depth&&Lyr.depth&&DB),pat=patMode&&!!KARR;
+    const showD=!!(hasD&&Lyr.depth&&DB),pat=patMode&&!!KARR;
     let RELIEF=null;if(pat&&S.wstyle==="rorlig"&&reliefPossible(w.wd)){RELIEF=new Float32Array(N);for(let q=0;q<nwi;q++){const i=WI[q];RELIEF[i]=HS(i)}}
     drawZones(R,vx0,vy0,vx1,vy1,mz,{RELIEF,FOK,KARR:pat?null:KARR,KPAT:pat?KARR:null,BAND:(showT||findOn)?BAND:null,
       tempFill:showT&&!showLa&&!findOn&&!showD,wdir:w?w.wd:null,wspd:w?(S.src==="egen"?S.own.sp:calcU(w)):null,SW:pat?SW:null,FV:pat?F:null,UV:pat?UF:null,mpz:m,DB:showD?DB:null,depthFill:showD&&((!showLa&&!findOn)||pat),priv:privOn?R.priv:null});
