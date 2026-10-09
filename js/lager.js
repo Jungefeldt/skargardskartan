@@ -174,7 +174,8 @@ function osmLoad(){if(S.osm||osmLoading)return;osmLoading=true;
       for(let i=0;i<c.length;i+=2){const lon=o[0]+c[i]/s,sn=Math.sin((o[1]+c[i+1]/s)*RAD),mx=(lon+180)/360,my=.5-Math.log((1+sn)/(1-sn))/(4*Math.PI);
         a[i]=mx;a[i+1]=my;if(mx<x0)x0=mx;if(mx>x1)x1=mx;if(my<y0)y0=my;if(my>y1)y1=my}
       return{a,bb:[x0,y0,x1,y1],c:cls}};
-    S.osm={b:D.b.map(c=>prep(c)),p:D.p.map(c=>prep(c)),v:D.v.map(([cl,c])=>prep(c,cl)),l:D.l.map(([cl,c])=>prep(c,cl))};
+    S.osm={b:D.b.map(c=>prep(c)),p:D.p.map(c=>prep(c)),v:D.v.map(([cl,c,nm])=>Object.assign(prep(c,cl),{nm:nm||""})),l:D.l.map(([cl,c])=>prep(c,cl)),
+      q:(D.q||[]).map(([t,x,y,nm])=>{const f=prep([x,y]);return{t,mx:f.a[0],my:f.a[1],nm:nm||""}})};
     coastKey=null;schedule()})
     .catch(()=>{osmLoading=false;toast("Detaljkartan är inte klar än, försöker igen senare")})}
 function osmView(cz,x0,y0,W0,H0){const N=256*Math.pow(2,cz),v=[x0/N,y0/N,(x0+W0)/N,(y0+H0)/N];
@@ -297,7 +298,41 @@ function drawContours(x,cz,x0,y0,k,zz){const T=S.terr;if(zz<12)return;const step
 function uiBoxes(){const m=$("map").getBoundingClientRect(),out=[];
   document.querySelectorAll(".bar,.side,.panel:not(.hidden),.sheet.open,.ruler,.leaflet-control-attribution").forEach(el=>{const r=el.getBoundingClientRect();if(r.width&&r.height)out.push([r.left-m.left,r.top-m.top,r.right-m.left,r.bottom-m.top])});return out}
 // Lägger ut etiketter i prioritetsordning och hoppar över allt som skulle krocka.
-function placeNames(){nameLayer.clearLayers();const boxes=uiBoxes();if(S.layers.names!==false)placeLabels(boxes,nameCands(),nameLayer,"names");return boxes}
+function placeNames(){nameLayer.clearLayers();const boxes=uiBoxes();
+  if(S.layers.names!==false){placeLabels(boxes,nameCands(),nameLayer,"names");if(S.land==="detalj"&&S.osm)placeLabels(boxes,detailCands(),nameLayer,"names")}
+  return boxes}
+// ------------------------------------------------------------------ platser och vägnamn i detaljkartan
+// typ: [symbol, färg, från zoom, prioritet, namn från zoom]
+const POI={farja:["⛴","#1F5F82",13,9,15],hamn:["⚓","#1F5F82",13,8,15],ramp:["⛵","#1F5F82",14,7,99],bransle:["⛽","#B0412E",14,7,16],
+  affar:["🛒","#7A5A2E",14,6,15],mat:["🍴","#7A5A2E",15,5,16],bad:["🏊","#2E86B0",15,4,99],camping:["⛺","#3E7A3A",15,4,16],
+  boende:["🛏","#7A5A2E",15,3,16],wc:["WC","#555",16,2,99],parkering:["P","#3A5FA8",16,1,99]};
+const mercLL=(mx,my)=>L.latLng(Math.atan(Math.sinh(Math.PI*(1-2*my)))*180/Math.PI,mx*360-180);
+const esc=s=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function detailCands(){const O=S.osm,z=map.getZoom(),b=map.getBounds(),N=256*Math.pow(2,z),out=[];
+  const nw=map.project(b.getNorthWest(),z),se=map.project(b.getSouthEast(),z),v=[nw.x/N,nw.y/N,se.x/N,se.y/N];
+  // platssymboler, de viktigaste först
+  for(const q of O.q){const P=POI[q.t];if(!P||z<P[2]||q.mx<v[0]||q.mx>v[2]||q.my<v[1]||q.my>v[3])continue;
+    const nm=q.nm&&z>=P[4]?esc(q.nm.length>22?q.nm.slice(0,21)+"…":q.nm):"",txt=P[0].length<=2&&/[A-Z]/.test(P[0]);
+    const html=`<div style="position:absolute;transform:translate(-11px,-11px);display:flex;align-items:center;gap:4px;white-space:nowrap;pointer-events:none">`+
+      `<span style="width:22px;height:22px;border-radius:50%;background:#fff;border:2px solid ${P[1]};display:flex;align-items:center;justify-content:center;font:${txt?"700 10px":"13px"} system-ui;color:${P[1]};box-shadow:0 1px 3px rgba(0,0,0,.3)">${P[0]}</span>`+
+      (nm?`<span style="font:600 11px system-ui;color:${P[1]};text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 3px #fff">${nm}</span>`:"")+`</div>`;
+    const w=nm?28+nm.length*6.3:24;out.push({ll:mercLL(q.mx,q.my),html,w:w*2-24,h:24,score:5e5+P[3]*1e4})}
+  // vägnamn längs vägarna (från zoom 15): på den längsta synliga raka biten, en gång per namn
+  if(z>=15){const best=new Map();
+    for(const f of O.v){if(!f.nm||f.bb[2]<v[0]||f.bb[0]>v[2]||f.bb[3]<v[1]||f.bb[1]>v[3])continue;const a=f.a;
+      // längsta nästan raka sträckan (flera bitar i rad som svänger mindre än 25 grader)
+      const W=se.x-nw.x,H=se.y-nw.y,px=i=>[a[i]*N-nw.x,a[i+1]*N-nw.y];let s0=0,len=0,dir=null;
+      const take=(i0,i1,L)=>{if(L<=0)return;const p0=px(i0),p1=px(i1),cx=(p0[0]+p1[0])/2,cy=(p0[1]+p1[1])/2;if(cx<20||cy<20||cx>W-20||cy>H-20)return;
+        const o=best.get(f.nm);if(!o||L>o.len)best.set(f.nm,{len:L,x1:p0[0],y1:p0[1],x2:p1[0],y2:p1[1],mx:(a[i0]+a[i1])/2,my:(a[i0+1]+a[i1+1])/2})};
+      for(let i=0;i+3<a.length;i+=2){const p1=px(i),p2=px(i+2),dx=p2[0]-p1[0],dy=p2[1]-p1[1],l=Math.hypot(dx,dy),d=Math.atan2(dy,dx);
+        if(dir!==null&&Math.abs(((d-dir)*180/Math.PI+540)%360-180)>25){take(s0,i,len);s0=i;len=0}
+        len+=l;dir=d}
+      take(s0,a.length-2,len)}
+    for(const [nm,s] of best){const tw=nm.length*6.2+6;if(s.len<tw*.8)continue;let ang=Math.atan2(s.y2-s.y1,s.x2-s.x1)*180/Math.PI;if(ang>90)ang-=180;if(ang<-90)ang+=180;
+      const r=ang*Math.PI/180,bw=Math.abs(tw*Math.cos(r))+Math.abs(14*Math.sin(r)),bh=Math.abs(tw*Math.sin(r))+Math.abs(14*Math.cos(r));
+      out.push({ll:mercLL(s.mx,s.my),html:`<div style="position:absolute;transform:translate(-50%,-50%) rotate(${ang.toFixed(1)}deg);font:italic 500 11px system-ui;color:#5A5A5A;white-space:nowrap;text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 3px #fff;pointer-events:none">${esc(nm)}</div>`,
+        w:bw,h:bh,score:1e5+s.len})}}
+  return out}
 function placeLabels(boxes,cands,layer,pane){cands.sort((a,b)=>b.score-a.score);const sz=map.getSize();
   for(const c of cands){const p=map.latLngToContainerPoint(c.ll),bx=[p.x-c.w/2-3,p.y-c.h/2-2,p.x+c.w/2+3,p.y+c.h/2+2];
     if(bx[0]<2||bx[1]<2||bx[2]>sz.x-2||bx[3]>sz.y-2)continue;
