@@ -139,20 +139,33 @@ async function drawCoast(){const zz=map.getZoom(),cz=Math.min(MASK_MAX,Math.max(
   const loops=traceLoops(LAND,W0,H0,zz-cz>=1?2:1);lastCoast={loops,cz,x0,y0};
   // landyta innanför konturen, i sjökortsfärg (inte när vanlig karta är vald)
   const det=S.land==="detalj";
-  if(det){fillLoops(x,loops,h,OSM_COL.oppen);if(S.osm)drawDetail(x,cz,x0,y0,k,zz,loops,h,W0,H0);else osmLoad()}
+  if(det){fillLoops(x,loops,h,OSM_COL.oppen);if(S.osm)drawDetail(x,cz,x0,y0,k,zz,loops,h,W0,H0);else osmLoad();
+    // terrängskuggning (markhöjd och träd) som skugga ovanpå detaljkartans färger
+    if(S.terr)drawTerrain(x,loops,h,cz,x0,y0,k,"multiply")}
   else if(S.land!=="karta"){const lc=LANDCOL[S.land];fillLoops(x,loops,h,`rgba(${lc[0]},${lc[1]},${lc[2]},.94)`);
     // terrängskuggning med skog ovanpå landfärgen, klippt till kustlinjen
     if(S.terr&&S.layers.contours)drawTerrain(x,loops,h,cz,x0,y0,k)}
   if(S.terr&&S.layers.contours)drawContours(x,cz,x0,y0,k,zz);
   // detaljkartan: blå strandlinje som hos Lantmäteriet, och bryggorna ovanpå
   strokeLoops(x,loops,h,det?"#2896E1":"#15191D",(det?1.3:1.5)*dpr);
-  if(det&&S.osm)drawPiers(x,cz,x0,y0,k,zz,W0,H0);coastKey=ck}
+  if(det&&S.osm){drawReeds(x,cz,x0,y0,k,zz,W0,H0);drawPiers(x,cz,x0,y0,k,zz,W0,H0)}coastKey=ck}
 // ------------------------------------------------------------------ detaljkarta (OpenStreetMap)
 // Hus, bryggor, vägar, stigar och marktyper från OpenStreetMap (data/osm/detalj.json), ritade i
 // Lantmäteriets stil ovanpå appens egen kustlinje. Laddas först när Detalj väljs.
 const OSM_COL={oppen:"rgb(255,252,226)",skog:"rgb(214,237,193)",bebyggd:"rgb(244,206,152)",industri:"rgb(225,205,190)",
   aker:"rgb(250,240,190)",berg:"rgb(232,228,215)",vatmark:"rgb(214,232,214)",strand:"rgb(250,240,200)"};
 const OSM_ORDER=["skog","aker","oppen","vatmark","berg","strand","industri","bebyggd"];
+// vassbälten (OSM: wetland=reedbed) ute i vattnet: grönt med små vassymboler, som på Lantmäteriets karta
+let reedPat=null;
+function drawReeds(x,cz,x0,y0,k,zz,W0,H0){if(zz<12)return;const O=S.osm,N=256*Math.pow(2,cz),vis=osmView(cz,x0,y0,W0,H0),dpr=window.devicePixelRatio||1;
+  const P=new Path2D();let any=false;
+  for(const f of O.l){if(f.c!=="vass"||f.a.length<6||!vis(f))continue;const a=f.a;P.moveTo((a[0]*N-x0)*k,(a[1]*N-y0)*k);for(let i=2;i<a.length;i+=2)P.lineTo((a[i]*N-x0)*k,(a[i+1]*N-y0)*k);P.closePath();any=true}
+  if(!any)return;
+  x.fillStyle="rgba(150,190,110,.55)";x.fill(P,"evenodd");
+  if(zz>=14){const s=Math.round(9*dpr);if(!reedPat||reedPat.s!==s){const c=document.createElement("canvas");c.width=c.height=s;const g=c.getContext("2d");g.strokeStyle="rgba(50,105,40,.9)";g.lineWidth=Math.max(1,.9*dpr);
+      g.beginPath();g.moveTo(s*.3,s*.85);g.lineTo(s*.3,s*.35);g.moveTo(s*.5,s*.85);g.lineTo(s*.5,s*.2);g.moveTo(s*.7,s*.85);g.lineTo(s*.7,s*.4);g.moveTo(s*.2,s*.85);g.lineTo(s*.8,s*.85);g.stroke();reedPat={s,p:x.createPattern(c,"repeat")}}
+    x.fillStyle=reedPat.p;x.fill(P,"evenodd")}
+  x.strokeStyle="rgba(70,120,55,.7)";x.lineWidth=.8*dpr;x.stroke(P)}
 let osmLoading=false;
 function osmLoad(){if(S.osm||osmLoading)return;osmLoading=true;
   getJSON("data/osm/detalj.json").then(D=>{const o=D.origin,s=D.scale,RAD=Math.PI/180;
@@ -170,7 +183,7 @@ function osmPath(x,f,N,x0,y0,k,close){const a=f.a;x.moveTo((a[0]*N-x0)*k,(a[1]*N
 function drawDetail(x,cz,x0,y0,k,zz,loops,h,W0,H0){const O=S.osm,N=256*Math.pow(2,cz),vis=osmView(cz,x0,y0,W0,H0),dpr=window.devicePixelRatio||1,PX=v=>(v-2)*h;
   x.save();x.beginPath();for(const p of loops){x.moveTo(PX(p[0][0]),PX(p[0][1]));for(let i=1;i<p.length;i++)x.lineTo(PX(p[i][0]),PX(p[i][1]));x.closePath()}x.clip("evenodd");
   // marktyper: skog först, bebyggelse överst
-  for(const cls of OSM_ORDER){x.fillStyle=OSM_COL[cls];x.beginPath();let any=false;for(const f of O.l)if(f.c===cls&&f.a.length>=6&&vis(f)){osmPath(x,f,N,x0,y0,k,true);any=true}if(any)x.fill()}
+  for(const cls of OSM_ORDER){if(cls==="vass")continue;x.fillStyle=OSM_COL[cls];x.beginPath();let any=false;for(const f of O.l)if(f.c===cls&&f.a.length>=6&&vis(f)){osmPath(x,f,N,x0,y0,k,true);any=true}if(any)x.fill()}
   x.lineJoin="round";x.lineCap="round";
   // vägar (från zoom 12) och stigar (prickade, från zoom 14)
   if(zz>=12)for(const [cl,w] of [[3,1.6],[2,2.6],[1,3.6]]){x.strokeStyle="rgb(168,168,170)";x.lineWidth=w*dpr*Math.min(1.4,Math.pow(1.25,zz-14));x.beginPath();
@@ -220,7 +233,7 @@ async function drawSat(){const k=S.sat,M=S.satMeta;
 // från nordväst som på en terrängkarta. Skog tonas grön och blir upphöjd, så att berg och skogsdungar
 // får djup. Bilden byggs en gång (rader jämnt fördelade i kartans projektion) och skalas sedan.
 let terrImg=null,terrKey=null;
-function terrainImage(){const T=S.terr,tr=S.trees,lc=LANDCOL[S.land];if(!T||!lc)return null;
+function terrainImage(){const T=S.terr,tr=S.trees,det=S.land==="detalj",lc=det?[255,255,255]:LANDCOL[S.land];if(!T||!lc)return null;
   const key=S.land+"|"+(tr?1:0);if(terrKey===key)return terrImg;
   const nx=T.nx,ny=T.ny,RAD=Math.PI/180,merc=lat=>Math.log(Math.tan(Math.PI/4+lat*RAD/2));
   const yT=merc(T.lat0),yB=merc(T.lat0-ny*T.dlat);
@@ -236,15 +249,15 @@ function terrainImage(){const T=S.terr,tr=S.trees,lc=LANDCOL[S.land];if(!T||!lc)
   for(let r=0;r<ny;r++)for(let c=0;c<nx;c++){const i=r*nx+c;if(!G[i])continue;
     const zx=(Z[r*nx+Math.min(nx-1,c+1)]-Z[r*nx+Math.max(0,c-1)])/(2*dxm)*EX,zy=(Z[Math.max(0,r-1)*nx+c]-Z[Math.min(ny-1,r+1)*nx+c])/(2*dym)*EX;
     const nl=Math.hypot(zx,zy,1),sh=Math.max(0,(-zx*Lx-zy*Ly+Lz)/nl)/Lz;          // 1 = plan mark
-    const f=Math.min(1,C[i]/8),v=Math.max(.55,Math.min(1.12,.62+.38*sh));
+    const f=det?0:Math.min(1,C[i]/8),v=det?Math.max(.62,Math.min(1,.7+.3*sh)):Math.max(.55,Math.min(1.12,.62+.38*sh));
     for(let j=0;j<3;j++)d[i*4+j]=Math.min(255,(lc[j]*(1-f)+FOREST[j]*f)*v);d[i*4+3]=240}
   g2.putImageData(img,0,0);terrImg={cv,yT,yB};terrKey=key;return terrImg}
-function drawTerrain(x,loops,h,cz,x0,y0,k){const T=S.terr,I=terrainImage();if(!I)return;
+function drawTerrain(x,loops,h,cz,x0,y0,k,blend){const T=S.terr,I=terrainImage();if(!I)return;
   const N=256*Math.pow(2,cz),PX=v=>(v-2)*h,R2=180/Math.PI;
   const left=((T.lon0+180)/360*N-x0)*k,right=((T.lon0+T.nx*T.dlon+180)/360*N-x0)*k;
   const top=((.5-I.yT/(2*Math.PI))*N-y0)*k,bot=((.5-I.yB/(2*Math.PI))*N-y0)*k;
   x.save();x.beginPath();for(const p of loops){x.moveTo(PX(p[0][0]),PX(p[0][1]));for(let i=1;i<p.length;i++)x.lineTo(PX(p[i][0]),PX(p[i][1]));x.closePath()}
-  x.clip("evenodd");x.imageSmoothingEnabled=true;x.drawImage(I.cv,left,top,right-left,bot-top);x.restore()}
+  x.clip("evenodd");x.imageSmoothingEnabled=true;if(blend)x.globalCompositeOperation=blend;x.drawImage(I.cv,left,top,right-left,bot-top);x.restore()}
 // Höjdkurvor på land ur Lantmäteriets höjdmodell (data/terrang.json, ca 20 m mellan punkterna).
 // Tätare kurvor ju mer man zoomar in; var femte kurva är lite kraftigare.
 let contourCache={key:null,lev:null};
