@@ -202,7 +202,9 @@ $("owndepth").onclick=()=>{let cur="";try{cur=localStorage.getItem("djupNyckel")
 // eftersom aisstream.io inte tillåter anslutning direkt från webbläsaren. Mellan hämtningarna flyttas
 // fartygen efter fart och kurs, så att de glider jämnt.
 const aisLayer=L.layerGroup().addTo(map),aisMk=new Map();let aisT=null,aisA=null,aisData=null;
-const aisUrl=()=>{try{return localStorage.getItem("aisUrl")||""}catch(_){return""}};
+// Cloudflare visar adressen utan https://, så det läggs till om det saknas
+const fixUrl=v=>{v=(v||"").trim();return v&&!/^https?:\/\//i.test(v)?"https://"+v.replace(/^\/+/,""):v};
+const aisUrl=()=>{try{return fixUrl(localStorage.getItem("aisUrl"))}catch(_){return""}};
 function aisKind(t){if(t==null)return["okänd typ","#555"];if(t>=60&&t<70)return["passagerarfartyg","#1F5F82"];if(t>=70&&t<80)return["lastfartyg","#2E7D4F"];
   if(t>=80&&t<90)return["tankfartyg","#B0412E"];if(t===30)return["fiskefartyg","#7A5A2E"];if(t===31||t===32||t===52)return["bogserbåt","#8A6D00"];
   if(t===50)return["lotsbåt","#8A6D00"];if(t===51)return["räddningsfartyg","#8A6D00"];if(t===36)return["segelbåt","#6A4C93"];if(t===37)return["fritidsbåt","#6A4C93"];
@@ -230,11 +232,12 @@ function aisSheet(id){const s=aisData&&aisData.ships.find(x=>x.id===id);if(!s)re
     ${s.dest?`<dt>Destination</dt><dd>${s.dest.replace(/</g,"&lt;")}</dd>`:""}<dt>Senaste position</dt><dd>för ${ag} sedan</dd><dt>MMSI</dt><dd>${s.id}</dd></dl>
     <p class="note">Positionen flyttas efter fart och kurs mellan uppdateringarna. Får inte användas för navigering.</p>`;$("sheet").classList.add("open")}
 async function aisPoll(){if(!S.layers.ais||document.hidden)return;const u=aisUrl();if(!u)return;
-  try{const r=await fetch(u,{cache:"no-store"}),j=await r.json();if(j.error){toast("AIS: "+j.error);return}
-    aisData={t0:j.t,loc:Date.now(),ships:j.ships||[]};aisDraw();if(j.err)console.warn("AIS:",j.err)}
-  catch(_){toast("Fartygen kunde inte hämtas")}}
+  let r;try{r=await fetch(u,{cache:"no-store"})}catch(_){toast("Fartygen kunde inte hämtas: ingen kontakt med "+u.replace(/^https?:\/\//,""));return}
+  let j;try{j=await r.json()}catch(_){toast(`Fartygen kunde inte hämtas: adressen svarade inte med fartygsdata (${r.status})`);return}
+  if(j.error){toast("AIS: "+j.error);return}
+  aisData={t0:j.t,loc:Date.now(),ships:j.ships||[]};aisDraw();if(j.err)console.warn("AIS:",j.err)}
 function aisAsk(){const v=window.prompt("Adress till AIS-mellanstationen (till exempel https://ais.dittnamn.workers.dev). Töm fältet för att ta bort:",aisUrl());
-  if(v===null)return null;try{if(v.trim())localStorage.setItem("aisUrl",v.trim());else localStorage.removeItem("aisUrl")}catch(_){}return v.trim()}
+  if(v===null)return null;const u=fixUrl(v);try{if(u)localStorage.setItem("aisUrl",u);else localStorage.removeItem("aisUrl")}catch(_){}return u}
 function aisStart(){aisStop(true);if(!aisUrl()&&!aisAsk()){S.layers.ais=false;$("aischip").setAttribute("aria-pressed","false");return}
   aisPoll();aisT=setInterval(aisPoll,20000);aisA=setInterval(aisDraw,2000)}
 function aisStop(keep){clearInterval(aisT);clearInterval(aisA);aisT=aisA=null;if(!keep){aisLayer.clearLayers();aisMk.clear()}}
