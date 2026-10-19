@@ -296,7 +296,7 @@ function drawContours(x,cz,x0,y0,k,zz){const T=S.terr;if(zz<12)return;const step
     x.stroke()}}
 // Ytor som täcks av tidsraden, knapparna och panelen, så att inga etiketter hamnar under dem.
 function uiBoxes(){const m=$("map").getBoundingClientRect(),out=[];
-  document.querySelectorAll(".bar,.side,.panel:not(.hidden),.sheet.open,.ruler,.leaflet-control-attribution").forEach(el=>{const r=el.getBoundingClientRect();if(r.width&&r.height)out.push([r.left-m.left,r.top-m.top,r.right-m.left,r.bottom-m.top])});return out}
+  document.querySelectorAll(".bar,.side,.panel:not(.hidden),.sheet.open,.ruler,.leaflet-control-attribution,.wscale:not([hidden])").forEach(el=>{const r=el.getBoundingClientRect();if(r.width&&r.height)out.push([r.left-m.left,r.top-m.top,r.right-m.left,r.bottom-m.top])});return out}
 // Lägger ut etiketter i prioritetsordning och hoppar över allt som skulle krocka.
 function placeNames(){nameLayer.clearLayers();const boxes=uiBoxes();
   if(S.layers.names!==false){placeLabels(boxes,nameCands(),nameLayer,"names");if(S.land==="detalj"&&S.osm)placeLabels(boxes,detailCands(),nameLayer,"names")}
