@@ -46,16 +46,16 @@ function drawSwanCrests(x,Z,R,cx0,cy0,W0,H0,k,h,dpr,mz,A,lvl){const sc=Math.pow(
   for(let y=0;y<H0;y++){const s=(cy0+y)*R.W+cx0;for(let xx=0;xx<W0;xx++){const i=y*W0+xx,j=s+xx;if(SW.H[j]<0)continue;const b=(SW.D[j]+180)*Math.PI/180;tvx[i]=Math.sin(b);tvy[i]=-Math.cos(b)}}
   return strokeGraded(x,lines,dpr,p=>{const i=at(p[0],p[1]);return i<0?-1:Hc[i]},p=>[p[0]*k,p[1]*k],p=>p[0]<2||p[1]<2||p[0]>W0-2||p[1]>H0-2,
     p=>{const i=at(p[0],p[1]);if(i<0)return[0,0];const d=sep(i)*k;return[tvx[i]*d,tvy[i]*d]})}
-// Mönster med små krusningar för lä: korta, mjuka vågstreck i förskjutna rader, fasta mot kartan
-// och vända tvärs mot vinden
-function ripplePattern(ctx,dpr,wd,ox,oy){const s=Math.round(64*dpr),c=document.createElement("canvas");c.width=c.height=s;const g=c.getContext("2d");
-  g.lineCap="round";
-  // oregelbundet utspridda krusningar i olika storlek och styrka (fast slumpföljd, så att mönstret är detsamma varje gång)
-  let r=11;const rnd=()=>(r=(r*16807)%2147483647)/2147483647;
-  for(let i=0;i<9;i++){const x=rnd()*s,y=rnd()*s,L=(2.6+rnd()*3.2)*dpr,a=(.7+rnd()*.9)*dpr,o=.2+rnd()*.22;
-    g.strokeStyle=`rgba(35,75,115,${o.toFixed(2)})`;g.lineWidth=Math.max(.6,(.55+rnd()*.35)*dpr);
-    for(const [dx,dy] of [[0,0],[-s,0],[0,-s],[-s,-s]]){const X=x+dx,Y=y+dy;   // även över kanten, så att mönstret blir sömlöst
-      g.beginPath();g.moveTo(X,Y);g.quadraticCurveTo(X+L*.25,Y-a,X+L*.5,Y);g.quadraticCurveTo(X+L*.75,Y+a,X+L,Y);g.stroke()}}
+// Mönster för lä: glesa, mjuka vågtecken i ljusblått med vit kant (samma symbol som i våghöjdsetiketterna),
+// oregelbundet utspridda, fasta mot kartan och vända tvärs mot vinden
+function ripplePattern(ctx,dpr,wd,ox,oy){const s=Math.round(110*dpr),c=document.createElement("canvas");c.width=c.height=s;const g=c.getContext("2d");
+  g.lineCap="round";g.lineJoin="round";
+  let r=7;const rnd=()=>(r=(r*16807)%2147483647)/2147483647;
+  const pts=[];for(let i=0;i<5;i++)pts.push([rnd()*s,rnd()*s,(13+rnd()*7)*dpr,(1.4+rnd()*.8)*dpr]);
+  const wave=(X,Y,L,a)=>{g.beginPath();g.moveTo(X,Y);g.quadraticCurveTo(X+L*.125,Y-a*2,X+L*.25,Y);g.quadraticCurveTo(X+L*.375,Y+a*2,X+L*.5,Y);
+    g.quadraticCurveTo(X+L*.625,Y-a*2,X+L*.75,Y);g.quadraticCurveTo(X+L*.875,Y+a*2,X+L,Y);g.stroke()};
+  for(const [style,w] of [["rgba(255,255,255,.75)",2.6],["rgba(70,140,195,.75)",1.2]]){g.strokeStyle=style;g.lineWidth=w*dpr;
+    for(const [x,y,L,a] of pts)for(const [dx,dy] of [[0,0],[-s,0],[0,-s],[-s,-s]])wave(x+dx,y+dy,L,a)}   // även över kanten, sömlöst
   const p=ctx.createPattern(c,"repeat");if(p.setTransform&&typeof DOMMatrix!=="undefined")p.setTransform(new DOMMatrix().translateSelf(-ox%s,-oy%s).rotateSelf(wd!=null?wd:0));return p}
 // Zonerna i vattnet som mjuka ytor med tunna konturlinjer: lä och sjögång, temperatur, Hitta plats och hemfridszoner
 function drawZones(R,vx0,vy0,vx1,vy1,mz,Z){const mg=4,cx0=Math.max(0,vx0-R.px0-mg),cy0=Math.max(0,vy0-R.py0-mg),cx1=Math.min(R.W,vx1-R.px0+mg),cy1=Math.min(R.H,vy1-R.py0+mg),W0=cx1-cx0,H0=cy1-cy0;
