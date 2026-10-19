@@ -28,7 +28,7 @@
   <input type="range" id="time" aria-label="Välj tid" min="0" max="0" value="0">
 </header>
 
-<section class="panel" id="panel">
+<section class="panel hidden" id="panel">
   <div class="chips" role="group" aria-label="Skikt">
     <button class="chip" data-layer="names" aria-pressed="true">Namn</button>
     <button class="chip" data-layer="la" aria-pressed="true">Lä</button>
@@ -55,12 +55,6 @@
       <label class="sl">till <b id="dmaxv"></b><input type="range" id="dmax" min="0" max="60" step="1" value="60"></label>
     </div>
   </div>
-  <div class="frow"><span>Sjögång</span>
-    <div class="seg small" role="radiogroup" aria-label="Hur sjögången visas">
-      <button role="radio" data-wstyle="farg" aria-checked="true">Färg</button>
-      <button role="radio" data-wstyle="monster" aria-checked="false">Vågmönster</button>
-      <button role="radio" data-wstyle="rorlig" aria-checked="false">Rörliga vågor</button>
-    </div></div>
   <div class="frow"><span>Land</span>
     <div class="seg small" role="radiogroup" aria-label="Färg på land">
       <button role="radio" data-land="gul" aria-checked="true">Gult</button>
