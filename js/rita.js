@@ -39,7 +39,7 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     await drawCoast();if(my!==seq)return;await yieldUI();
     // första gången: sjömärkena efter land, och vågor och vind först när sjömärkena har laddat (högst 1,5 s)
     if(!map.hasLayer(seamarkLayer)){seamarkLayer.addTo(map);await new Promise(r=>{let d=false;const f=()=>{if(!d){d=true;r()}};seamarkLayer.once("load",f);setTimeout(f,1500)})}
-    if(!haveLa&&!haveT&&!privOn&&!((S.depth||S.depthP)&&Lyr.depth)){hideCanvas();hideCanvas("zones");hideCanvas("crests");crestSet=null;reliefHide();laR=null;laT=null;drawArrows(placeNames(),true);legend();if(sel)sheet();return}
+    if(!haveLa&&!haveT&&!privOn&&!((S.depth||S.depthP)&&Lyr.depth)){waveScale(null);hideCanvas();hideCanvas("zones");hideCanvas("crests");crestSet=null;reliefHide();laR=null;laT=null;drawArrows(placeNames(),true);legend();if(sel)sheet();return}
     // lä
     // riktningen avrundas till 5 grader; samma vy och riktning återanvänder beräkningen (snabb uppspelning)
     let F=null;if(haveLa){const dr=Math.round(w.wd/5)*5,key=[mz,R.px0,R.py0,R.W,R.H,dr].join("|");
@@ -98,6 +98,8 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     if(showLa&&!findOn){KARR=new Int16Array(N).fill(-999);for(let q=0;q<nwi;q++){const i=WI[q];let k=0;const h=HS(i);while(h>=LA_CLASSES[k][0])k++;KARR[i]=k}}
     if(findOn){FOK=new Int16Array(N).fill(-999);for(let q=0;q<nwi;q++){const i=WI[q];let k=0;const h=wave(UF[i],F[i]);while(h>=LA_CLASSES[k][0])k++;const tv=TV[i];
         FOK[i]=k<=F_.maxK&&tv>=F_.tmin&&tv<=F_.tmax&&!(S.privOk&&R.priv[i])&&(!useDF||(DV[i]>=F_.dmin&&DV[i]<=F_.dmax))?1:0}}
+    // våghöjdsskalan på kartan: visar också när allt vatten i bilden är lä
+    if(KARR){let n0=0;for(let q=0;q<nwi;q++)if(KARR[WI[q]]===0)n0++;waveScale({calm:nwi>0&&n0/nwi>.98},w)}else waveScale(null);
     hideCanvas();
     const showD=!!(hasD&&Lyr.depth&&DB),pat=patMode&&!!KARR;
     let RELIEF=null;if(pat&&S.wstyle==="rorlig"&&reliefPossible(w.wd)){RELIEF=new Float32Array(N);for(let q=0;q<nwi;q++){const i=WI[q];RELIEF[i]=HS(i)}}
