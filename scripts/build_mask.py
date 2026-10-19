@@ -20,7 +20,7 @@ from shapely.geometry import LineString, box
 from shapely.ops import polygonize, unary_union
 from shapely.strtree import STRtree
 
-from common import BOUNDS, CACHE, FULL_BOUNDS, MASK, MASK_ZOOMS
+from common import AREA as BOUNDS, CACHE, FULL_BOUNDS, MASK, MASK_ZOOMS
 
 PRIV = MASK / "privat"   # ligger i mask-mappen så att den sparas av flödet
 PRIV_ZOOMS = range(11, 14)
@@ -71,7 +71,8 @@ def coastlines():
         w, s, e, n = BOUNDS
         print("Hämtar kustlinje från OpenStreetMap i delar ...", flush=True)
         els, seen = [], set()
-        rows, cols = 3, 2   # mindre frågor klarar överbelastade servrar bättre
+        # mindre frågor klarar överbelastade servrar bättre (ca 0,3 x 0,4 grader per fråga)
+        rows, cols = max(3, math.ceil((n - s) / 0.3)), max(2, math.ceil((e - w) / 0.4))
         for i in range(rows):
             for j in range(cols):
                 s1, n1 = s + (n - s) * i / rows, s + (n - s) * (i + 1) / rows
@@ -299,7 +300,7 @@ def _min_zoom(kind, typ, km):
     return 9 if km > 15 else 10 if km > 5 else 11 if km > 2 else 12 if km > 0.7 else 13 if km > 0.25 else 14
 
 
-NAMES_VERSION = 2   # höj när urvalet av namn ändras, så hämtas de om automatiskt
+NAMES_VERSION = 3   # höj när urvalet av namn eller området ändras, så hämtas de om automatiskt
 
 
 def build_names(budget_s=10 * 60):
@@ -308,7 +309,7 @@ def build_names(budget_s=10 * 60):
     w, s, e, n = BOUNDS
     out, seen = [], set()
     deadline = time.time() + budget_s
-    rows, cols = 3, 2
+    rows, cols = max(3, math.ceil((n - s) / 0.25)), max(2, math.ceil((e - w) / 0.35))
     print("Hämtar ortnamn, öar och fjärdar ...", flush=True)
     for i in range(rows):
         for j in range(cols):
@@ -368,6 +369,11 @@ def main():
         build_names()
         return
     polys = water_polygons(coastlines())
+    # zoomnivåer som inte längre används tas bort, så att appen inte blandar gamla och nya rutor
+    import shutil
+    for d in MASK.iterdir():
+        if d.is_dir() and d.name.isdigit() and int(d.name) not in MASK_ZOOMS:
+            shutil.rmtree(d, ignore_errors=True)
     for z in MASK_ZOOMS:
         n = render(polys, z)
         print(f"  zoom {z}: {n} rutor", flush=True)
