@@ -58,10 +58,6 @@ function legend(){const L_=$("legend"),w=laWind||domainWind(S.ti);let h="";
   if(S.layers.arrows)h+=`<span style="flex:1 1 100%">Vindpilar: `+[["svag",0],["måttlig",4],["frisk",8],["hård",14],["mycket hård",20]].map(x=>`<i style="background:${windCol(x[1])};margin:0 3px 0 6px;border-radius:50%;width:10px"></i>${x[0]}`).join("")+`</span>`;
   if((S.layers.temp||S.find.on)&&tRange)h+=`<span><i style="background:#0B3550;height:2px;border:0"></i>Vattentemp, zoner om ${tStep} °C (${f0(tRange[0])} till ${f0(tRange[1])} här)</span>`;
   if(S.layers.ais)h+=`<span style="flex:1 1 100%">Fartyg (AIS): `+[["passagerare","#1F5F82"],["last","#2E7D4F"],["tank","#B0412E"],["fiske","#7A5A2E"],["bogsering, lots","#8A6D00"],["fritid","#6A4C93"],["övriga","#555"]].map(x=>`<i style="background:${x[1]};margin:0 3px 0 6px;border-radius:50%;width:10px"></i>${x[0]}`).join("")+`</span>`;
-  if(S.sat&&S.satMeta){const M=S.satMeta,ds=M.bilder.map(b=>b.datum).sort(),d=new Date(ds[ds.length-1]),dt=d.getDate()+" "+MON[d.getMonth()],
-      sw={vass:"background:rgba(30,115,30,.85)",grumlighet:"background:linear-gradient(90deg,rgb(30,75,145),rgb(90,150,170),rgb(180,140,80))",alger:"background:linear-gradient(90deg,rgb(40,90,150),rgb(70,150,130),rgb(90,170,50))"}[S.sat],
-      txt={vass:"Vass och vattenväxter",grumlighet:"Klart till grumligt vatten",alger:"Lite till mycket alger"}[S.sat],m=d.getMonth()+1;
-    h+=`<span style="flex:1 1 100%"><i style="${sw};width:28px"></i>${txt} (satellit ${dt})${S.sat==="alger"&&(m<5||m>9)?" · utanför algsäsongen, mest brus":""}</span>`}
   L_.innerHTML=h}
 
 // ------------------------------------------------------------------ våghöjdsskala på kartan
@@ -117,7 +113,6 @@ $("tmax").oninput=e=>{S.find.tmax=Math.max(+e.target.value,S.find.tmin);syncFind
 document.querySelectorAll("[data-land]").forEach(b=>b.onclick=()=>{S.land=b.dataset.land;syncBase();document.querySelectorAll("[data-land]").forEach(x=>x.setAttribute("aria-checked",x===b));try{localStorage.setItem("land",S.land)}catch(_){}schedule()});
 try{const sv=localStorage.getItem("land");if(sv&&LANDCOL[sv]!==undefined||sv==="karta"){S.land=sv;document.querySelectorAll("[data-land]").forEach(x=>x.setAttribute("aria-checked",x.dataset.land===sv))}}catch(_){}
 syncBase();
-document.querySelectorAll("[data-sat]").forEach(b=>b.onclick=()=>{S.sat=b.dataset.sat||null;document.querySelectorAll("[data-sat]").forEach(x=>x.setAttribute("aria-checked",x===b));try{localStorage.setItem("sat",S.sat||"")}catch(_){}drawSat()});
 document.querySelectorAll("[data-basis]").forEach(b=>b.onclick=()=>{S.basis=b.dataset.basis;document.querySelectorAll("[data-basis]").forEach(x=>x.setAttribute("aria-checked",x===b));try{localStorage.setItem("basis",S.basis)}catch(_){}schedule()});
 try{const sb=localStorage.getItem("basis");if(sb==="medel"||sb==="byar"){S.basis=sb;document.querySelectorAll("[data-basis]").forEach(x=>x.setAttribute("aria-checked",x.dataset.basis===sb))}}catch(_){}
 $("explain").onclick=()=>{let h=`<h3>Färger för lä och sjögång</h3><p class="note" style="margin-top:2px;padding-right:44px">Klassen bestäms av uppskattad våghöjd (signifikant våghöjd, ungefär medelhöjden av den högsta tredjedelen av vågorna). Den räknas från vindstyrkan och hur mycket öppet vatten det finns mot vinden, högst 6 km.</p>
@@ -125,9 +120,9 @@ $("explain").onclick=()=>{let h=`<h3>Färger för lä och sjögång</h3><p class
     <h3>Räkna på byar eller medelvind</h3><p class="note" style="margin-top:2px"><b>Byar</b> (förvalt) räknar vågorna på den starkaste vinden i prognosen. Det ger en försiktig bild, bra när du ska ligga still och fiska. <b>Medelvind</b> stämmer bättre med hur vågorna oftast blir, men underskattar läget när det är byigt.</p>
     <h3>Vindstyrka (SMHI)</h3><table class="deftab"><tr><th>Benämning</th><th>m/s</th></tr><tr><td>Lugnt</td><td>0–0,2</td></tr><tr><td>Svag vind</td><td>0,3–3</td></tr><tr><td>Måttlig vind</td><td>4–7</td></tr><tr><td>Frisk vind</td><td>8–13</td></tr><tr><td>Hård vind</td><td>14–19</td></tr><tr><td>Mycket hård vind</td><td>20–24</td></tr><tr><td>Storm</td><td>25–32</td></tr></table>
     <h3>Vågmönster</h3><p class="note" style="margin-top:2px">Ovanpå färgerna ligger vågkammarna som linjer, tvärs mot vågornas gång. Där det finns beräkningar från vågmodellen SWAN (TU Delft) följer linjerna modellens vågriktning, som tar hänsyn till lä bakom öar, refraktion mot grunt vatten och diffraktion runt uddar. Tätare och tunnare linjer betyder mindre vågor, glesare och kraftigare linjer större vågor. I lä ritas inga linjer.</p>
-    <h3>Lä för vinden</h3><p class="note" style="margin-top:2px">Bakom öar, uddar och skog är vinden svagare. Dämpningen räknas från markhöjden i Lantmäteriets höjdmodell och trädhöjden (${S.treesSrc||"skog från OpenStreetMap"}): störst närmast hindret, och vinden är nästan tillbaka efter 20 till 30 gånger hindrets höjd. Uppskruvad vind runt uddar och i smala sund ingår inte.</p>
-    <h3>Höjdkurvor och terräng</h3><p class="note" style="margin-top:2px">Höjdkurvorna på land kommer från Lantmäteriets laserskannade höjdmodell. Avståndet mellan kurvorna är 10 m, och 5 m när man zoomat in; var femte kurva är kraftigare. Land skuggas som en terrängkarta med ljuset från nordväst, och skogen syns som gröna, upphöjda partier${S.treesSrc?" (trädhöjd: "+S.treesSrc+")":""}.</p>
-    <h3>Detaljkarta och satellit</h3><p class="note" style="margin-top:2px"><b>Detalj</b> ritar hus, bryggor, vägar med namn, stigar, skog, bebyggelse, vassbälten och platser (färjeläge, hamn, båtramp, bränsle, affär, restaurang, badplats med mera) från OpenStreetMap i samma stil som Lantmäteriets karta, ovanpå appens egen kustlinje, och skuggar terrängen från Lantmäteriets höjdmodell och trädhöjden. Hur detaljerat det blir beror på hur väl området är karterat. <b>Satellit</b> visar bilder från Copernicus Sentinel-2 (10 m), där varje punkt tas från den senaste molnfria bilden: <b>Grumligt</b> visar hur mycket rött ljus vattnet reflekterar: slam och plankton ger grumligare vatten, och gränsen mot klart vatten är ofta ett bra fiskeställe. <b>Alger</b> är ett klorofyllindex och säger mest under maj till september.${S.satMeta?" Senaste bild: "+S.satMeta.bilder.map(b=>b.datum).sort().pop()+".":""}</p>
+    <h3>Lä för vinden</h3><p class="note" style="margin-top:2px">Bakom öar, uddar och skog är vinden svagare. Dämpningen räknas från markhöjden i Lantmäteriets höjdmodell och trädhöjden: störst närmast hindret, och vinden är nästan tillbaka efter 20 till 30 gånger hindrets höjd. Uppskruvad vind runt uddar och i smala sund ingår inte.</p>
+    <h3>Höjdkurvor</h3><p class="note" style="margin-top:2px">Höjdkurvorna på land kommer från Lantmäteriets laserskannade höjdmodell. Avståndet mellan kurvorna är 10 m, och 5 m när man zoomat in; var femte kurva är kraftigare.</p>
+    <h3>Detaljkarta</h3><p class="note" style="margin-top:2px"><b>Detalj</b> ritar hus, bryggor, vägar med namn, stigar, skog, bebyggelse, vassbälten och platser (färjeläge, hamn, båtramp, bränsle, affär, restaurang, badplats med mera) från OpenStreetMap i samma stil som Lantmäteriets karta, ovanpå appens egen kustlinje. Hur detaljerat det blir beror på hur väl området är karterat.</p>
     <h3>Eget djup</h3><p class="note" style="margin-top:2px">Med <b>Eget djup</b> längst ner i panelen kopplar du in ett eget, privat djup (till exempel uträknat från sjökortsbilder). Det hämtas från ett privat förråd med en nyckel som bara sparas i den här webbläsaren, och används där det finns; utanför används EMODnet.${S.depthP?" Eget djup är kopplat.":""}</p>
     <h3>Fartyg (AIS)</h3><p class="note" style="margin-top:2px">Med <b>Fartyg</b> visas fartyg som sänder AIS, till exempel färjor, Waxholmsbåtar och fraktfartyg, uppdaterat var 20:e sekund via en egen mellanstation och aisstream.io. Mellan uppdateringarna flyttas fartygen efter sin fart och kurs. Pilar är fartyg i rörelse, prickar ligger still, och strecket bakom visar var fartyget har åkt de senaste 30 minuterna. De flesta fritidsbåtar har inte AIS, och täckningen beror på frivilliga mottagare. Får inte användas för navigering.</p>
     <h3>Djup</h3><p class="note" style="margin-top:2px">Djupzonerna kommer från EMODnet Bathymetry (DTM 2024). I svenska vatten är underlaget medvetet glesat av sekretesskäl, så djupen är ungefärliga: bra för att skilja grunda vikar från djupa fjärdar, men enskilda grund, kanter och smala sund syns inte. "Nära lodning" betyder att det finns en verklig mätning i närheten, "uppskattat" att djupet är uträknat från omgivningen.</p>
@@ -355,28 +350,28 @@ $("loc").onclick=()=>{if(me){map.setView(me.getLatLng(),Math.max(map.getZoom(),1
     ()=>toast("Kunde inte hämta din position"),{enableHighAccuracy:true,maximumAge:10000})};
 
 // ------------------------------------------------------------------ start
+// Alla startfiler hämtas samtidigt; kartan ritas så fort vinden, masken och läet finns, och det som
+// kommer senare (djup, höjdkurvor, temperatur) läggs till när det kommer.
 (async()=>{
-  try{S.names=await getJSON("mask/namn.json")}catch(_){}
-  try{const X=await getJSON("data/swan/index.json");if(X.done&&X.done.length)S.swan=X}catch(_){}
-  try{const X=await getJSON("data/fas/index.json");if(X.done&&X.done.length)S.fas=X}catch(_){}
-  try{const V=await getJSON("data/vind/index.json");if(V.done&&V.done.length===V.dirs.length)S.vind=V}catch(_){}
-  // höjdmodellen för höjdkurvorna laddas i bakgrunden
-  getJSON("data/terrang.json").then(T=>{const b=atob(T.h),a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);T.H=a;delete T.h;S.terr=T;schedule()})
-    .catch(()=>{$("contourchip")&&($("contourchip").hidden=true)});
-  // trädhöjd från Skogsstyrelsen (samma rutnät som höjdmodellen), för terrängskuggningen
-  getJSON("data/trad.json").then(M=>new Promise((res,rej)=>{const im=new Image();im.onload=()=>{const c=document.createElement("canvas");c.width=im.width;c.height=im.height;
-      const g=c.getContext("2d");g.drawImage(im,0,0);const d=g.getImageData(0,0,im.width,im.height).data,a=new Float32Array(im.width*im.height);
-      for(let i=0;i<a.length;i++)a[i]=d[i*4]/(M.per_m||4);S.treesSrc=M.source;res(a)};im.onerror=rej;im.src="data/trad.png"}))
-    .then(a=>{S.trees=a;terrKey=null;schedule()}).catch(()=>{});
-  try{const G=await getJSON("data/djup.json"),dec=s=>{const b=atob(s),a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a};
-    G.D=dec(G.d);G.M=dec(G.m);delete G.d;delete G.m;S.depth=G}catch(_){$("depthchip")&&($("depthchip").hidden=true);$("depthfind")&&($("depthfind").hidden=true)}
-  try{const pi=await getJSON("mask/privat/info.json");S.privOk=true;S.privM=pi.meter||25}catch(_){$("privchip")&&($("privchip").hidden=true)}
-  try{const info=await getJSON("mask/info.json");if(info.zooms&&info.zooms.length)MASK_MAX=Math.min(15,Math.max(...info.zooms));const [w,s,e,n]=info.bounds;map.setMaxBounds(L.latLngBounds([s,w],[n,e]).pad(.4))}catch(_){}
+  const dec=s=>{const b=atob(s),a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a};
+  const get=u=>getJSON(u).catch(()=>null);
+  const P={names:get("mask/namn.json"),swan:get("data/swan/index.json"),vind:get("data/vind/index.json"),info:get("mask/info.json"),
+    priv:get("mask/privat/info.json"),wind:get("data/wind.json"),temp:get("data/temp.json"),djup:get("data/djup.json"),terr:get("data/terrang.json")};
   loadOwnDepth(true);
-  try{S.satMeta=await getJSON("data/satellit/satellit.json");$("satrow").hidden=false;
-    let sv=null;try{sv=localStorage.getItem("sat")}catch(_){}
-    if(sv&&S.satMeta.skalor[sv]&&document.querySelector(`[data-sat="${sv}"]`)){S.sat=sv;document.querySelectorAll("[data-sat]").forEach(x=>x.setAttribute("aria-checked",x.dataset.sat===sv))}drawSat()}catch(_){}
-  try{S.wind=await getJSON("data/wind.json");$("time").max=S.wind.times.length-1}catch(_){toast("Ingen vinddata än");$("when").textContent="Ingen vinddata"}
-  try{S.temp=await getJSON("data/temp.json");const b=atob(S.temp.t),a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);S.T=a;smoothTemp()}catch(_){}
-  setTime(nowIndex());schedule()})();
+  const [names,X,V,info,pi,W]=await Promise.all([P.names,P.swan,P.vind,P.info,P.priv,P.wind]);
+  if(names)S.names=names;
+  if(X&&X.done&&X.done.length)S.swan=X;
+  if(V&&V.done&&V.done.length===V.dirs.length)S.vind=V;
+  if(info){if(info.zooms&&info.zooms.length)MASK_MAX=Math.min(15,Math.max(...info.zooms));const [w,s,e,n]=info.bounds;map.setMaxBounds(L.latLngBounds([s,w],[n,e]).pad(.4))}
+  if(pi){S.privOk=true;S.privM=pi.meter||25}else $("privchip")&&($("privchip").hidden=true);
+  if(W){S.wind=W;$("time").max=W.times.length-1}else{toast("Ingen vinddata än");$("when").textContent="Ingen vinddata"}
+  setTime(nowIndex());schedule();
+  P.temp.then(T=>{if(!T)return;S.temp=T;S.T=dec(T.t);smoothTemp();schedule()});
+  P.djup.then(G=>{if(!G){$("depthchip")&&($("depthchip").hidden=true);$("depthfind")&&($("depthfind").hidden=true);return}
+    G.D=dec(G.d);G.M=dec(G.m);delete G.d;delete G.m;S.depth=G;schedule()});
+  // höjdmodellen för höjdkurvorna
+  P.terr.then(T=>{if(!T){$("contourchip")&&($("contourchip").hidden=true);return}T.H=dec(T.h);delete T.h;S.terr=T;schedule()});
+})();
 if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
+// be telefonen att inte rensa bort det som sparats (kustmasken, djupet, läet och SWAN)
+try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(_){}
