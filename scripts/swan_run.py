@@ -289,6 +289,11 @@ def build_swan(budget_s=25 * 60, workers=None):
     if lm:
         GRID = f"g070lm{lm}"
         OUT = TOP / GRID
+    elif os.environ.get("LM_USERNAME"):
+        # masken har byggts om och Lantmäteriets kustlinje är inte inlagd igen än: vänta på den,
+        # i stället för att räkna om allt på den grövre kustlinjen
+        log("SWAN: väntar på att Lantmäteriets kustlinje läggs in i masken igen")
+        return
     if BOUNDS == FULL_BOUNDS:
         log("SWAN: körs bara i testområdet (hela skärgården blir för stor), hoppar över")
         return
