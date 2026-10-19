@@ -16,11 +16,7 @@ map.attributionControl.addAttribution("© OpenStreetMap");
 function syncBase(){const karta=S.land==="karta";if(karta&&!map.hasLayer(osm))osm.addTo(map);if(!karta&&map.hasLayer(osm))map.removeLayer(osm);
   // med rörliga vågor har bakgrunden vågornas färg, så att vattnet har rätt färg innan vågorna ritats
   map.getContainer().style.background=karta?"#ddd":S.wstyle==="rorlig"?"#5A7BA6":"#AAD3DF"}
-// sjömärken ligger ovanpå alla färgade lager (men under namn och etiketter), så att de alltid syns.
-// De läggs till först när land och kustlinje har ritats (se redraw), så att kartan byggs upp i ordning:
-// land, sjömärken, sedan vind och vågor.
-map.createPane("seamarks").style.zIndex=380; map.getPane("seamarks").style.pointerEvents="none";
-const seamarkLayer=L.tileLayer("https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png",{pane:"seamarks",maxZoom:18,attribution:"Sjömärken © OpenSeaMap · SMHI · Copernicus Marine · EMODnet"});
+map.attributionControl.addAttribution("SMHI · met.no · Copernicus Marine · EMODnet · Lantmäteriet");
 // Linjal: randig skala med jämna avstånd, som på ett sjökort
 (()=>{const st=document.createElement("style");st.textContent=`.ruler{margin:calc(110px + env(safe-area-inset-top,0px)) 0 0 10px!important;padding:5px 8px 4px;background:rgba(255,255,255,.88);border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.25);font:600 11px/1 system-ui,-apple-system,Segoe UI,sans-serif;color:#14222B;pointer-events:none}
 .ruler .rb{display:flex;height:6px;border:1.5px solid #14222B;box-sizing:content-box}.ruler .rb i{flex:1;background:#14222B}.ruler .rb i:nth-child(even){background:#fff}
@@ -53,7 +49,7 @@ function hideCanvas(pane){pane=pane||"ov";if(overlays[pane]){map.removeLayer(ove
 const LANDCOL={gul:[244,226,160],vit:[246,246,242],detalj:[255,252,226]};
 
 // ------------------------------------------------------------------ data
-const S={wstyle:"kombo",basis:"byar",land:"gul",wind:null,temp:null,T:null,layers:{la:true,temp:false,arrows:true,waves:true,priv:true,names:true,depth:false,contours:true,ais:false},privOk:false,find:{on:false,maxK:0,tmin:null,tmax:null,dmin:0,dmax:60},src:"prognos",own:{dir:225,sp:8},ti:0,sat:null,satMeta:null,osm:null};
+const S={wstyle:"kombo",basis:"byar",land:"gul",wind:null,temp:null,T:null,layers:{la:true,temp:false,arrows:true,waves:true,priv:false,names:true,depth:false,contours:true,ais:false},privOk:false,find:{on:false,maxK:0,tmin:null,tmax:null,dmin:0,dmax:60},src:"prognos",own:{dir:225,sp:8},ti:0,sat:null,satMeta:null,osm:null};
 async function getJSON(u){const r=await fetch(u,{cache:"no-cache"});if(!r.ok)throw new Error(u+" "+r.status);return r.json()}
 
 // ------------------------------------------------------------------ land/vatten-mask
@@ -64,7 +60,7 @@ function tile(z,x,y,pre){pre=pre||"mask/";const k=pre+z+"/"+x+"/"+y;if(tiles.has
     im.onerror=()=>res(null);im.src=k+".png"});
   tiles.set(k,p);return p}
 async function region(z,px0,py0,W,H){const water=new Uint8Array(W*H),priv=new Uint8Array(W*H),pz=Math.max(11,Math.min(13,z));const tx0=Math.floor(px0/256),ty0=Math.floor(py0/256),tx1=Math.floor((px0+W-1)/256),ty1=Math.floor((py0+H-1)/256);
-  const jobs=[];for(let tx=tx0;tx<=tx1;tx++)for(let ty=ty0;ty<=ty1;ty++)jobs.push(Promise.all([tile(z,tx,ty),S.privOk&&pz===z?tile(z,tx,ty,"mask/privat/"):null]).then(([a,p])=>({tx,ty,a,p})));
+  const jobs=[];for(let tx=tx0;tx<=tx1;tx++)for(let ty=ty0;ty<=ty1;ty++)jobs.push(Promise.all([tile(z,tx,ty),S.privOk&&S.layers.priv&&pz===z?tile(z,tx,ty,"mask/privat/"):null]).then(([a,p])=>({tx,ty,a,p})));
   for(const {tx,ty,a,p} of await Promise.all(jobs)){const ox=tx*256-px0,oy=ty*256-py0;
     for(let yy=Math.max(0,oy);yy<Math.min(H,oy+256);yy++){const ry=(yy-oy)*256,wy=yy*W;
       for(let xx=Math.max(0,ox);xx<Math.min(W,ox+256);xx++){water[wy+xx]=a?a[ry+xx-ox]:1;if(p)priv[wy+xx]=p[ry+xx-ox]}}}
