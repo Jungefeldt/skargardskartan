@@ -33,11 +33,11 @@ import urllib.request
 
 import numpy as np
 
-from common import BOUNDS, CACHE, FULL_BOUNDS, MASK
+from common import BOUNDS, CACHE, FULL_BOUNDS, MASK, MASK_ZOOMS
 
 STAC = "https://api.lantmateriet.se/stac-hojd/v1"
 LAND_M = 0.5            # höjd över havet (RH 2000) som räknas som land
-ZOOMS = [15, 14, 13, 12]
+ZOOMS = [z for z in (15, 14, 13, 12) if z in MASK_ZOOMS]   # de zoomnivåer masken har
 VERSION = 2             # höjs om metoden ändras, så att allt görs om
 T_DLAT, T_DLON = 0.00018, 0.00036   # höjdmodellen för vinden: ca 20 x 20 m
 BLOCK = 2500            # läser höjddatan i bitar om 2500 x 2500 m
@@ -299,7 +299,8 @@ def build(budget_s=15 * 60):
         log("Lantmäteriets kustlinje: masken saknas, väntar till nästa körning")
         return
     info = json.loads(info_p.read_text())
-    if info.get("lm") == VERSION and info.get("bounds") == BOUNDS:
+    # klart om kustlinjen redan är förbättrad för det här området (masken kan täcka mer)
+    if info.get("lm") == VERSION and info.get("lm_bounds", info.get("bounds")) == BOUNDS:
         return
     auth = auth_header()
     if not auth:
@@ -331,6 +332,7 @@ def build(budget_s=15 * 60):
         log(f"  zoom {g['z']}: {changed} pixlar ändrade mot OpenStreetMap ({100 * np.isfinite(g['frac']).mean():.0f} % täckt av höjddata)")
     save_terrain(terr)
     info["lm"] = VERSION
+    info["lm_bounds"] = BOUNDS
     info_p.write_text(json.dumps(info))
     log("Lantmäteriets kustlinje: klar")
 
