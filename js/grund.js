@@ -53,7 +53,7 @@ function hideCanvas(pane){pane=pane||"ov";if(overlays[pane]){map.removeLayer(ove
 const LANDCOL={gul:[244,226,160],vit:[246,246,242],detalj:[255,252,226]};
 
 // ------------------------------------------------------------------ data
-const S={wstyle:"farg",basis:"byar",land:"gul",wind:null,temp:null,T:null,layers:{la:true,temp:false,arrows:true,waves:true,priv:true,names:true,depth:false,contours:true},privOk:false,find:{on:false,maxK:0,tmin:null,tmax:null,dmin:0,dmax:60},src:"prognos",own:{dir:225,sp:8},ti:0,sat:null,satMeta:null,osm:null};
+const S={wstyle:"kombo",basis:"byar",land:"gul",wind:null,temp:null,T:null,layers:{la:true,temp:false,arrows:true,waves:true,priv:true,names:true,depth:false,contours:true},privOk:false,find:{on:false,maxK:0,tmin:null,tmax:null,dmin:0,dmax:60},src:"prognos",own:{dir:225,sp:8},ti:0,sat:null,satMeta:null,osm:null};
 async function getJSON(u){const r=await fetch(u,{cache:"no-cache"});if(!r.ok)throw new Error(u+" "+r.status);return r.json()}
 
 // ------------------------------------------------------------------ land/vatten-mask
