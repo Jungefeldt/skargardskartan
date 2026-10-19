@@ -29,9 +29,26 @@ function cors(req) {
   };
 }
 
-function handle(raw) {
-  let m;
-  try { m = JSON.parse(typeof raw === "string" ? raw : new TextDecoder().decode(raw)); } catch (_) { DIAG.bad++; return; }
+// meddelandena kan komma som text, ArrayBuffer, typad array eller Blob beroende på miljö
+async function toText(raw) {
+  if (typeof raw === "string") return raw;
+  if (raw instanceof ArrayBuffer || ArrayBuffer.isView(raw)) return new TextDecoder().decode(raw);
+  if (raw && typeof raw.text === "function") return await raw.text();
+  if (raw && typeof raw.arrayBuffer === "function") return new TextDecoder().decode(await raw.arrayBuffer());
+  return String(raw);
+}
+async function handle(raw) {
+  let m, txt = "";
+  try {
+    txt = (await toText(raw)).replace(/^\uFEFF/, "").replace(/\u0000/g, "").trim();
+    try { m = JSON.parse(txt); }
+    catch (_) { const a = txt.indexOf("{"), b = txt.lastIndexOf("}"); m = JSON.parse(txt.slice(a, b + 1)); }   // skräp före eller efter
+  } catch (e) {
+    DIAG.bad++;
+    if (!DIAG.sample) DIAG.sample = { kind: raw == null ? "null" : typeof raw === "string" ? "string" : (raw.constructor && raw.constructor.name) || typeof raw,
+      head: String(txt).slice(0, 160), error: String(e.message || e) };
+    return;
+  }
   DIAG.msgs++;
   if (m.error || m.Error) { DIAG.server = String(m.error || m.Error); return; }   // till exempel ogiltig nyckel
   const md = m.MetaData || {}, id = md.MMSI;
@@ -69,12 +86,14 @@ async function listen(env) {
   ws.accept();
   ws.send(JSON.stringify({ APIKey: env.AISSTREAM_KEY, BoundingBoxes: [AREA],
     FilterMessageTypes: ["PositionReport", "StandardClassBPositionReport", "ExtendedClassBPositionReport", "ShipStaticData", "StaticDataReport"] }));
+  const pending = [];
   await new Promise(res => {
     const t = setTimeout(res, LISTEN_MS);
-    ws.addEventListener("message", ev => handle(ev.data));
+    ws.addEventListener("message", ev => { pending.push(handle(ev.data)); });
     ws.addEventListener("close", ev => { DIAG.close = (ev.code || "") + (ev.reason ? " " + ev.reason : ""); clearTimeout(t); res(); });
     ws.addEventListener("error", ev => { DIAG.close = "fel: " + (ev.message || "okänt"); clearTimeout(t); res(); });
   });
+  await Promise.all(pending);
   DIAG.ms = Date.now() - t0;
   try { ws.close(1000, "klar"); } catch (_) {}
 }
