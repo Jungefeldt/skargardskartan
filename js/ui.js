@@ -63,6 +63,24 @@ function legend(){const L_=$("legend"),w=laWind||domainWind(S.ti);let h="";
     h+=`<span style="flex:1 1 100%"><i style="${sw};width:28px"></i>${txt} (satellit ${dt})${S.sat==="alger"&&(m<5||m>9)?" · utanför algsäsongen, mest brus":""}</span>`}
   L_.innerHTML=h}
 
+// ------------------------------------------------------------------ våghöjdsskala på kartan
+// Fem rutor med sjögångens färger och vågmönster, gränserna i meter under, och en rad med vinden som
+// kartan räknar med. Är allt vatten i bilden lä står det tydligt, så att det syns att kartan fungerar.
+(()=>{const st=document.createElement("style");st.textContent=`.wscale{position:absolute;left:10px;bottom:calc(24px + env(safe-area-inset-bottom,0px));z-index:900;background:rgba(255,255,255,.92);border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.25);padding:6px 8px 4px;font:600 11px/1.2 system-ui,-apple-system,Segoe UI,sans-serif;color:#14222B;pointer-events:none}
+.wscale .ws-st{margin-bottom:5px;white-space:nowrap}.wscale .ws-st b{font-size:12px}.wscale .ws-row{display:flex;gap:0}.wscale .ws-row svg{display:block}
+.wscale .ws-ax{position:relative;height:13px;margin-top:2px}.wscale .ws-ax span{position:absolute;transform:translateX(-50%);font-weight:500;color:#40505A}`;document.head.appendChild(st)})();
+function waveSwatch(k,w,h){const gap=[0,6,8,11,14][k];let d="";if(gap)for(let x0=3;x0<w;x0+=gap)d+=` M${x0} 1 Q${x0+k+1} ${h/2} ${x0} ${h-1}`;
+  return`<svg width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="${LA_SOLID[k]}"/>${d?`<path d="${d}" fill="none" stroke="#11171c" stroke-opacity="${CREST_O[k]}" stroke-width="${Math.max(.7,CREST_W[k]*.8)}"/>`:""}</svg>`}
+function waveScale(st,w){const el=$("wscale");if(!el)return;if(!st||!w){el.hidden=true;return}
+  const U=S.src==="egen"?S.own.sp:w.ws,gust=S.src==="egen"?null:w.gust,wind=`${U<.5?"":dirName(w.wd)+" "}${f0(U)} m/s${gust!=null&&gust>U+.5?", byar "+f0(gust):""}`;
+  const head=U<.5?`<b>Vindstilla</b>`:U<1.5?`<b>Nästan vindstilla</b> · ${wind}`:st.calm?`<b>Lä i hela bilden</b> · ${wind}`:`Vind ${wind}`;
+  const W=34,ticks=["0,1","0,25","0,5","1 m"];
+  el.innerHTML=`<div class="ws-st">${head}</div><div class="ws-row">${[0,1,2,3,4].map(k=>waveSwatch(k,W,14)).join("")}</div>`+
+    `<div class="ws-ax" style="width:${5*W}px">${ticks.map((t,i)=>`<span style="left:${(i+1)*W}px">${t}</span>`).join("")}</div>`;
+  // ovanför upphovsrättsraden, hur hög den än blir
+  const at=document.querySelector(".leaflet-control-attribution");el.style.bottom=`calc(${(at?at.offsetHeight:18)+6}px + env(safe-area-inset-bottom,0px))`;
+  el.hidden=false}
+
 // ------------------------------------------------------------------ tid
 const WD=["sön","mån","tis","ons","tor","fre","lör"],MON=["jan","feb","mar","apr","maj","jun","jul","aug","sep","okt","nov","dec"];
 function fmtTime(iso){const d=new Date(iso);return WD[d.getDay()]+" "+d.getDate()+" "+MON[d.getMonth()]+" "+String(d.getHours()).padStart(2,"0")+":00"}
