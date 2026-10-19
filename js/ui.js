@@ -57,6 +57,7 @@ function legend(){const L_=$("legend"),w=laWind||domainWind(S.ti);let h="";
   if((S.depth||S.depthP)&&S.layers.depth)h+=`<span style="flex:1 1 100%">Djup${S.depthP?" (eget djup där det finns, annars ungefärligt)":" (ungefärligt)"}: `+DEPTH_STEPS.map((d,k)=>`<i style="background:${DEPTH_COL[k]};margin:0 3px 0 6px"></i>${k===DEPTH_STEPS.length-1?d+"+":d}`).join("")+` m</span>`;
   if(S.layers.arrows)h+=`<span style="flex:1 1 100%">Vindpilar: `+[["svag",0],["måttlig",4],["frisk",8],["hård",14],["mycket hård",20]].map(x=>`<i style="background:${windCol(x[1])};margin:0 3px 0 6px;border-radius:50%;width:10px"></i>${x[0]}`).join("")+`</span>`;
   if((S.layers.temp||S.find.on)&&tRange)h+=`<span><i style="background:#0B3550;height:2px;border:0"></i>Vattentemp, zoner om ${tStep} °C (${f0(tRange[0])} till ${f0(tRange[1])} här)</span>`;
+  if(S.layers.ais)h+=`<span style="flex:1 1 100%">Fartyg (AIS): `+[["passagerare","#1F5F82"],["last","#2E7D4F"],["tank","#B0412E"],["fiske","#7A5A2E"],["bogsering, lots","#8A6D00"],["fritid","#6A4C93"],["övriga","#555"]].map(x=>`<i style="background:${x[1]};margin:0 3px 0 6px;border-radius:50%;width:10px"></i>${x[0]}`).join("")+`</span>`;
   if(S.sat&&S.satMeta){const M=S.satMeta,ds=M.bilder.map(b=>b.datum).sort(),d=new Date(ds[ds.length-1]),dt=d.getDate()+" "+MON[d.getMonth()],
       sw={vass:"background:rgba(30,115,30,.85)",grumlighet:"background:linear-gradient(90deg,rgb(30,75,145),rgb(90,150,170),rgb(180,140,80))",alger:"background:linear-gradient(90deg,rgb(40,90,150),rgb(70,150,130),rgb(90,170,50))"}[S.sat],
       txt={vass:"Vass och vattenväxter",grumlighet:"Klart till grumligt vatten",alger:"Lite till mycket alger"}[S.sat],m=d.getMonth()+1;
@@ -103,7 +104,8 @@ $("play").onclick=()=>{if(playT){stopPlay();return}const W=S.wind;if(!W)return;
 $("prev").onclick=()=>{stopPlay();setTime(S.ti-1)};$("next").onclick=()=>{stopPlay();setTime(S.ti+1)};$("now").onclick=()=>{stopPlay();setTime(nowIndex())};
 
 // ------------------------------------------------------------------ kontroller
-document.querySelectorAll("[data-layer]").forEach(b=>b.onclick=()=>{const k=b.dataset.layer;S.layers[k]=!S.layers[k];b.setAttribute("aria-pressed",S.layers[k]);schedule()});
+document.querySelectorAll("[data-layer]").forEach(b=>b.onclick=()=>{const k=b.dataset.layer;S.layers[k]=!S.layers[k];b.setAttribute("aria-pressed",S.layers[k]);
+  if(k==="ais"){if(S.layers.ais)aisStart();else aisStop();try{localStorage.setItem("ais",S.layers.ais?"1":"")}catch(_){}}schedule()});
 $("findbtn").onclick=()=>{S.find.on=!S.find.on;$("findbtn").setAttribute("aria-pressed",S.find.on);$("find").hidden=!S.find.on;schedule()};
 document.querySelectorAll("[data-maxk]").forEach(b=>b.onclick=()=>{S.find.maxK=+b.dataset.maxk;document.querySelectorAll("[data-maxk]").forEach(x=>x.setAttribute("aria-checked",x===b));schedule()});
 function syncFind(){$("tmin").value=S.find.tmin;$("tmax").value=S.find.tmax;$("tminv").textContent=f0(S.find.tmin)+" °C";$("tmaxv").textContent=f0(S.find.tmax)+" °C"}
@@ -127,6 +129,7 @@ $("explain").onclick=()=>{let h=`<h3>Färger för lä och sjögång</h3><p class
     <h3>Höjdkurvor och terräng</h3><p class="note" style="margin-top:2px">Höjdkurvorna på land kommer från Lantmäteriets laserskannade höjdmodell. Avståndet mellan kurvorna är 10 m, och 5 m när man zoomat in; var femte kurva är kraftigare. Land skuggas som en terrängkarta med ljuset från nordväst, och skogen syns som gröna, upphöjda partier${S.treesSrc?" (trädhöjd: "+S.treesSrc+")":""}.</p>
     <h3>Detaljkarta och satellit</h3><p class="note" style="margin-top:2px"><b>Detalj</b> ritar hus, bryggor, vägar med namn, stigar, skog, bebyggelse, vassbälten och platser (färjeläge, hamn, båtramp, bränsle, affär, restaurang, badplats med mera) från OpenStreetMap i samma stil som Lantmäteriets karta, ovanpå appens egen kustlinje, och skuggar terrängen från Lantmäteriets höjdmodell och trädhöjden. Hur detaljerat det blir beror på hur väl området är karterat. <b>Satellit</b> visar bilder från Copernicus Sentinel-2 (10 m), där varje punkt tas från den senaste molnfria bilden: <b>Grumligt</b> visar hur mycket rött ljus vattnet reflekterar: slam och plankton ger grumligare vatten, och gränsen mot klart vatten är ofta ett bra fiskeställe. <b>Alger</b> är ett klorofyllindex och säger mest under maj till september.${S.satMeta?" Senaste bild: "+S.satMeta.bilder.map(b=>b.datum).sort().pop()+".":""}</p>
     <h3>Eget djup</h3><p class="note" style="margin-top:2px">Med <b>Eget djup</b> längst ner i panelen kopplar du in ett eget, privat djup (till exempel uträknat från sjökortsbilder). Det hämtas från ett privat förråd med en nyckel som bara sparas i den här webbläsaren, och används där det finns; utanför används EMODnet.${S.depthP?" Eget djup är kopplat.":""}</p>
+    <h3>Fartyg (AIS)</h3><p class="note" style="margin-top:2px">Med <b>Fartyg</b> visas fartyg som sänder AIS, till exempel färjor, Waxholmsbåtar och fraktfartyg, uppdaterat var 20:e sekund via en egen mellanstation och aisstream.io. Mellan uppdateringarna flyttas fartygen efter sin fart och kurs. Pilar är fartyg i rörelse, prickar ligger still. De flesta fritidsbåtar har inte AIS, och täckningen beror på frivilliga mottagare. Får inte användas för navigering.</p>
     <h3>Djup</h3><p class="note" style="margin-top:2px">Djupzonerna kommer från EMODnet Bathymetry (DTM 2024). I svenska vatten är underlaget medvetet glesat av sekretesskäl, så djupen är ungefärliga: bra för att skilja grunda vikar från djupa fjärdar, men enskilda grund, kanter och smala sund syns inte. "Nära lodning" betyder att det finns en verklig mätning i närheten, "uppskattat" att djupet är uträknat från omgivningen.</p>
     <p class="note">Uppskattningen tar inte hänsyn till dyning, strömmar eller båttrafik, och vågor böjer runt små öar. Använd den som stöd, inte för navigering.</p>`;
   $("sheetc").innerHTML=h;$("sheet").classList.add("open")};
@@ -193,6 +196,52 @@ $("owndepth").onclick=()=>{let cur="";try{cur=localStorage.getItem("djupNyckel")
   const v=window.prompt(cur?"Eget djup är kopplat. Klistra in en ny nyckel, eller töm fältet för att koppla bort:":"Klistra in nyckeln till det privata djupförrådet (djup-privat):",cur);
   if(v===null)return;try{if(v.trim())localStorage.setItem("djupNyckel",v.trim());else localStorage.removeItem("djupNyckel")}catch(_){}
   if(!v.trim()){S.depthP=null;toast("Eget djup bortkopplat");schedule();return}loadOwnDepth()};
+
+// ------------------------------------------------------------------ fartyg (AIS)
+// Fartygen hämtas var 20:e sekund från en egen mellanstation (Cloudflare Worker, se tools/ais-worker.js),
+// eftersom aisstream.io inte tillåter anslutning direkt från webbläsaren. Mellan hämtningarna flyttas
+// fartygen efter fart och kurs, så att de glider jämnt.
+const aisLayer=L.layerGroup().addTo(map),aisMk=new Map();let aisT=null,aisA=null,aisData=null;
+const aisUrl=()=>{try{return localStorage.getItem("aisUrl")||""}catch(_){return""}};
+function aisKind(t){if(t==null)return["okänd typ","#555"];if(t>=60&&t<70)return["passagerarfartyg","#1F5F82"];if(t>=70&&t<80)return["lastfartyg","#2E7D4F"];
+  if(t>=80&&t<90)return["tankfartyg","#B0412E"];if(t===30)return["fiskefartyg","#7A5A2E"];if(t===31||t===32||t===52)return["bogserbåt","#8A6D00"];
+  if(t===50)return["lotsbåt","#8A6D00"];if(t===51)return["räddningsfartyg","#8A6D00"];if(t===36)return["segelbåt","#6A4C93"];if(t===37)return["fritidsbåt","#6A4C93"];
+  if(t>=40&&t<50)return["snabbgående fartyg","#1F5F82"];return["övrigt fartyg","#555"]}
+const KN=.5144;
+function aisPos(s){const age=aisData?(aisData.t0-s.t)/1000+(Date.now()-aisData.loc)/1000:0;let lat=s.lat,lon=s.lon;
+  if(s.sog!=null&&s.sog>=.5&&s.cog!=null&&age>0&&age<600){const d=s.sog*KN*age,a=s.cog*Math.PI/180;lat+=d*Math.cos(a)/111320;lon+=d*Math.sin(a)/(111320*Math.cos(lat*Math.PI/180))}
+  return[lat,lon,age]}
+function aisIcon(s,c,z){const mv=s.sog!=null&&s.sog>=.5,dir=s.hdg!=null?s.hdg:s.cog!=null?s.cog:0,big=(s.len||0)>=80,sz=big?32:24;
+  const shape=mv?`<svg width="${sz}" height="${sz}" viewBox="-10 -10 20 20" style="transform:rotate(${dir}deg);transition:transform .8s"><path d="M0 -9 L6 7 L0 4 L-6 7 Z" fill="${c}" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg>`
+    :`<svg width="${sz*.7}" height="${sz*.7}" viewBox="-6 -6 12 12"><circle r="4.2" fill="${c}" stroke="#fff" stroke-width="1.6"/></svg>`;
+  const nm=z>=13&&s.n?`<span style="position:absolute;left:50%;top:${sz/2+2}px;transform:translateX(-50%);white-space:nowrap;font:700 11px system-ui;color:${c};text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 3px #fff">${s.n.replace(/</g,"&lt;")}</span>`:"";
+  return L.divIcon({className:"",html:`<div style="position:relative;transform:translate(-50%,-50%);display:inline-block">${shape}${nm}</div>`,iconSize:[0,0]})}
+function aisDraw(){if(!aisData||!S.layers.ais)return;const z=map.getZoom(),b=map.getBounds().pad(.2),seen=new Set();
+  for(const s of aisData.ships){const [lat,lon,age]=aisPos(s);if(age>900||!b.contains([lat,lon]))continue;seen.add(s.id);
+    const [kind,c]=aisKind(s.type),key=[z>=13,s.sog!=null&&s.sog>=.5,Math.round((s.hdg!=null?s.hdg:s.cog||0)/3),c,(s.len||0)>=80,s.n].join("|");let m=aisMk.get(s.id);
+    if(!m){m=L.marker([lat,lon],{pane:"lbl",icon:aisIcon(s,c,z),keyboard:false,zIndexOffset:500}).addTo(aisLayer);m._k=key;aisMk.set(s.id,m);
+      m.on("click",e=>{L.DomEvent.stopPropagation(e);clearTimeout(tapT);aisSheet(s.id)})}
+    else{m.setLatLng([lat,lon]);if(m._k!==key){m.setIcon(aisIcon(s,c,z));m._k=key}}}
+  for(const [id,m] of aisMk)if(!seen.has(id)){aisLayer.removeLayer(m);aisMk.delete(id)}}
+function aisSheet(id){const s=aisData&&aisData.ships.find(x=>x.id===id);if(!s)return;const [kind]=aisKind(s.type),[,,age]=aisPos(s);
+  const ag=age<90?`${Math.round(age)} s`:`${Math.round(age/60)} min`;
+  $("sheetc").innerHTML=`<h3>${s.n?s.n.replace(/</g,"&lt;"):"Fartyg utan namn"}</h3><dl class="kv"><dt>Typ</dt><dd>${kind}${s.len?`, ${s.len} m`:""}</dd>
+    <dt>Fart</dt><dd>${s.sog!=null?`${f1(s.sog)} knop (${f1(s.sog*KN*3.6)} km/h)`:"okänd"}</dd><dt>Kurs</dt><dd>${s.cog!=null?Math.round(s.cog)+"°":"okänd"}</dd>
+    ${s.dest?`<dt>Destination</dt><dd>${s.dest.replace(/</g,"&lt;")}</dd>`:""}<dt>Senaste position</dt><dd>för ${ag} sedan</dd><dt>MMSI</dt><dd>${s.id}</dd></dl>
+    <p class="note">Positionen flyttas efter fart och kurs mellan uppdateringarna. Får inte användas för navigering.</p>`;$("sheet").classList.add("open")}
+async function aisPoll(){if(!S.layers.ais||document.hidden)return;const u=aisUrl();if(!u)return;
+  try{const r=await fetch(u,{cache:"no-store"}),j=await r.json();if(j.error){toast("AIS: "+j.error);return}
+    aisData={t0:j.t,loc:Date.now(),ships:j.ships||[]};aisDraw();if(j.err)console.warn("AIS:",j.err)}
+  catch(_){toast("Fartygen kunde inte hämtas")}}
+function aisAsk(){const v=window.prompt("Adress till AIS-mellanstationen (till exempel https://ais.dittnamn.workers.dev). Töm fältet för att ta bort:",aisUrl());
+  if(v===null)return null;try{if(v.trim())localStorage.setItem("aisUrl",v.trim());else localStorage.removeItem("aisUrl")}catch(_){}return v.trim()}
+function aisStart(){aisStop(true);if(!aisUrl()&&!aisAsk()){S.layers.ais=false;$("aischip").setAttribute("aria-pressed","false");return}
+  aisPoll();aisT=setInterval(aisPoll,20000);aisA=setInterval(aisDraw,2000)}
+function aisStop(keep){clearInterval(aisT);clearInterval(aisA);aisT=aisA=null;if(!keep){aisLayer.clearLayers();aisMk.clear()}}
+map.on("zoomend moveend",()=>{if(S.layers.ais)aisDraw()});
+document.addEventListener("visibilitychange",()=>{if(!document.hidden&&S.layers.ais)aisPoll()});
+$("aisset").onclick=()=>{const v=aisAsk();if(v===null)return;if(v&&S.layers.ais)aisStart();else if(!v){aisStop();S.layers.ais=false;$("aischip").setAttribute("aria-pressed","false")}};
+try{if(localStorage.getItem("ais")&&aisUrl()){S.layers.ais=true;$("aischip").setAttribute("aria-pressed","true");setTimeout(aisStart,1500)}}catch(_){}
 
 // ------------------------------------------------------------------ egna observationer av sjön
 // Du anger vilken sjö du ser och kan låta telefonen mäta båtens gungning i 60 sekunder. Varje observation
