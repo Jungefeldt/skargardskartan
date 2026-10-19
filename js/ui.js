@@ -129,7 +129,7 @@ $("explain").onclick=()=>{let h=`<h3>Färger för lä och sjögång</h3><p class
     <h3>Höjdkurvor och terräng</h3><p class="note" style="margin-top:2px">Höjdkurvorna på land kommer från Lantmäteriets laserskannade höjdmodell. Avståndet mellan kurvorna är 10 m, och 5 m när man zoomat in; var femte kurva är kraftigare. Land skuggas som en terrängkarta med ljuset från nordväst, och skogen syns som gröna, upphöjda partier${S.treesSrc?" (trädhöjd: "+S.treesSrc+")":""}.</p>
     <h3>Detaljkarta och satellit</h3><p class="note" style="margin-top:2px"><b>Detalj</b> ritar hus, bryggor, vägar med namn, stigar, skog, bebyggelse, vassbälten och platser (färjeläge, hamn, båtramp, bränsle, affär, restaurang, badplats med mera) från OpenStreetMap i samma stil som Lantmäteriets karta, ovanpå appens egen kustlinje, och skuggar terrängen från Lantmäteriets höjdmodell och trädhöjden. Hur detaljerat det blir beror på hur väl området är karterat. <b>Satellit</b> visar bilder från Copernicus Sentinel-2 (10 m), där varje punkt tas från den senaste molnfria bilden: <b>Grumligt</b> visar hur mycket rött ljus vattnet reflekterar: slam och plankton ger grumligare vatten, och gränsen mot klart vatten är ofta ett bra fiskeställe. <b>Alger</b> är ett klorofyllindex och säger mest under maj till september.${S.satMeta?" Senaste bild: "+S.satMeta.bilder.map(b=>b.datum).sort().pop()+".":""}</p>
     <h3>Eget djup</h3><p class="note" style="margin-top:2px">Med <b>Eget djup</b> längst ner i panelen kopplar du in ett eget, privat djup (till exempel uträknat från sjökortsbilder). Det hämtas från ett privat förråd med en nyckel som bara sparas i den här webbläsaren, och används där det finns; utanför används EMODnet.${S.depthP?" Eget djup är kopplat.":""}</p>
-    <h3>Fartyg (AIS)</h3><p class="note" style="margin-top:2px">Med <b>Fartyg</b> visas fartyg som sänder AIS, till exempel färjor, Waxholmsbåtar och fraktfartyg, uppdaterat var 20:e sekund via en egen mellanstation och aisstream.io. Mellan uppdateringarna flyttas fartygen efter sin fart och kurs. Pilar är fartyg i rörelse, prickar ligger still. De flesta fritidsbåtar har inte AIS, och täckningen beror på frivilliga mottagare. Får inte användas för navigering.</p>
+    <h3>Fartyg (AIS)</h3><p class="note" style="margin-top:2px">Med <b>Fartyg</b> visas fartyg som sänder AIS, till exempel färjor, Waxholmsbåtar och fraktfartyg, uppdaterat var 20:e sekund via en egen mellanstation och aisstream.io. Mellan uppdateringarna flyttas fartygen efter sin fart och kurs. Pilar är fartyg i rörelse, prickar ligger still, och strecket bakom visar var fartyget har åkt de senaste 30 minuterna. De flesta fritidsbåtar har inte AIS, och täckningen beror på frivilliga mottagare. Får inte användas för navigering.</p>
     <h3>Djup</h3><p class="note" style="margin-top:2px">Djupzonerna kommer från EMODnet Bathymetry (DTM 2024). I svenska vatten är underlaget medvetet glesat av sekretesskäl, så djupen är ungefärliga: bra för att skilja grunda vikar från djupa fjärdar, men enskilda grund, kanter och smala sund syns inte. "Nära lodning" betyder att det finns en verklig mätning i närheten, "uppskattat" att djupet är uträknat från omgivningen.</p>
     <p class="note">Uppskattningen tar inte hänsyn till dyning, strömmar eller båttrafik, och vågor böjer runt små öar. Använd den som stöd, inte för navigering.</p>`;
   $("sheetc").innerHTML=h;$("sheet").classList.add("open")};
@@ -201,7 +201,12 @@ $("owndepth").onclick=()=>{let cur="";try{cur=localStorage.getItem("djupNyckel")
 // Fartygen hämtas var 20:e sekund från en egen mellanstation (Cloudflare Worker, se tools/ais-worker.js),
 // eftersom aisstream.io inte tillåter anslutning direkt från webbläsaren. Mellan hämtningarna flyttas
 // fartygen efter fart och kurs, så att de glider jämnt.
-const aisLayer=L.layerGroup().addTo(map),aisMk=new Map();let aisT=null,aisA=null,aisData=null;
+const aisLayer=L.layerGroup().addTo(map),aisTrk=L.layerGroup().addTo(map),aisMk=new Map(),aisTr=new Map();let aisT=null,aisA=null,aisData=null;
+// spåret: var fartyget varit de senaste 30 minuterna, fram till där det är nu; bryts vid luckor över 5 minuter
+function aisTrack(s,lat,lon){const h=(s.h||[]).filter(p=>p[0]!=null);if(!h.length)return[];const segs=[[]];let pt=null;
+  for(const p of h){if(pt&&p[2]-pt[2]>5*60000)segs.push([]);segs[segs.length-1].push([p[0],p[1]]);pt=p}
+  const last=segs[segs.length-1];if(s.sog!=null&&s.sog>=.5)last.push([lat,lon]);
+  return segs.filter(g=>g.length>=2)}
 // Cloudflare visar adressen utan https://, så det läggs till om det saknas
 const fixUrl=v=>{v=(v||"").trim();return v&&!/^https?:\/\//i.test(v)?"https://"+v.replace(/^\/+/,""):v};
 const aisUrl=()=>{try{return fixUrl(localStorage.getItem("aisUrl"))}catch(_){return""}};
@@ -223,8 +228,13 @@ function aisDraw(){if(!aisData||!S.layers.ais)return;const z=map.getZoom(),b=map
     const [kind,c]=aisKind(s.type),key=[z>=13,s.sog!=null&&s.sog>=.5,Math.round((s.hdg!=null?s.hdg:s.cog||0)/3),c,(s.len||0)>=80,s.n].join("|");let m=aisMk.get(s.id);
     if(!m){m=L.marker([lat,lon],{pane:"lbl",icon:aisIcon(s,c,z),keyboard:false,zIndexOffset:500}).addTo(aisLayer);m._k=key;aisMk.set(s.id,m);
       m.on("click",e=>{L.DomEvent.stopPropagation(e);clearTimeout(tapT);aisSheet(s.id)})}
-    else{m.setLatLng([lat,lon]);if(m._k!==key){m.setIcon(aisIcon(s,c,z));m._k=key}}}
-  for(const [id,m] of aisMk)if(!seen.has(id)){aisLayer.removeLayer(m);aisMk.delete(id)}}
+    else{m.setLatLng([lat,lon]);if(m._k!==key){m.setIcon(aisIcon(s,c,z));m._k=key}}
+    const segs=aisTrack(s,lat,lon);let tr=aisTr.get(s.id);
+    if(segs.length){if(!tr){tr=L.polyline(segs,{color:c,weight:2.4,opacity:.6,lineCap:"round",lineJoin:"round",interactive:false}).addTo(aisTrk);aisTr.set(s.id,tr)}
+      else{tr.setLatLngs(segs);tr.setStyle({color:c})}}
+    else if(tr){aisTrk.removeLayer(tr);aisTr.delete(s.id)}}
+  for(const [id,m] of aisMk)if(!seen.has(id)){aisLayer.removeLayer(m);aisMk.delete(id)}
+  for(const [id,tr] of aisTr)if(!seen.has(id)){aisTrk.removeLayer(tr);aisTr.delete(id)}}
 function aisSheet(id){const s=aisData&&aisData.ships.find(x=>x.id===id);if(!s)return;const [kind]=aisKind(s.type),[,,age]=aisPos(s);
   const ag=age<90?`${Math.round(age)} s`:`${Math.round(age/60)} min`;
   $("sheetc").innerHTML=`<h3>${s.n?s.n.replace(/</g,"&lt;"):"Fartyg utan namn"}</h3><dl class="kv"><dt>Typ</dt><dd>${kind}${s.len?`, ${s.len} m`:""}</dd>
@@ -240,7 +250,7 @@ function aisAsk(){const v=window.prompt("Adress till AIS-mellanstationen (till e
   if(v===null)return null;const u=fixUrl(v);try{if(u)localStorage.setItem("aisUrl",u);else localStorage.removeItem("aisUrl")}catch(_){}return u}
 function aisStart(){aisStop(true);if(!aisUrl()&&!aisAsk()){S.layers.ais=false;$("aischip").setAttribute("aria-pressed","false");return}
   aisPoll();aisT=setInterval(aisPoll,20000);aisA=setInterval(aisDraw,2000)}
-function aisStop(keep){clearInterval(aisT);clearInterval(aisA);aisT=aisA=null;if(!keep){aisLayer.clearLayers();aisMk.clear()}}
+function aisStop(keep){clearInterval(aisT);clearInterval(aisA);aisT=aisA=null;if(!keep){aisLayer.clearLayers();aisMk.clear();aisTrk.clearLayers();aisTr.clear()}}
 map.on("zoomend moveend",()=>{if(S.layers.ais)aisDraw()});
 document.addEventListener("visibilitychange",()=>{if(!document.hidden&&S.layers.ais)aisPoll()});
 $("aisset").onclick=()=>{const v=aisAsk();if(v===null)return;if(v&&S.layers.ais)aisStart();else if(!v){aisStop();S.layers.ais=false;$("aischip").setAttribute("aria-pressed","false")}};
