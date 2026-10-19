@@ -194,6 +194,98 @@ $("owndepth").onclick=()=>{let cur="";try{cur=localStorage.getItem("djupNyckel")
   if(v===null)return;try{if(v.trim())localStorage.setItem("djupNyckel",v.trim());else localStorage.removeItem("djupNyckel")}catch(_){}
   if(!v.trim()){S.depthP=null;toast("Eget djup bortkopplat");schedule();return}loadOwnDepth()};
 
+// ------------------------------------------------------------------ egna observationer av sjön
+// Du anger vilken sjö du ser och kan låta telefonen mäta båtens gungning i 60 sekunder. Varje observation
+// sparas i den här webbläsaren med plats, tid, bedömning, mätning och vad kartan visade just där,
+// så att kartans träffsäkerhet kan räknas ut. Kan exporteras som CSV.
+(()=>{const st=document.createElement("style");st.textContent=`.obsb{display:grid;gap:6px;margin:8px 0}.obsb button{display:flex;align-items:center;gap:10px;text-align:left;padding:8px 10px;border-radius:10px;border:1px solid rgba(0,0,0,.15);background:#fff;font:500 14px system-ui;color:#14222B}
+.obsb button i{width:26px;height:18px;border-radius:4px;flex:none;border:1px solid rgba(0,0,0,.15)}.obsb button small{display:block;color:#5A6770;font-size:12px}
+.obsrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.obsrow button{padding:7px 12px;border-radius:9px;border:1px solid rgba(0,0,0,.2);background:#fff;font:600 13px system-ui}`;document.head.appendChild(st)})();
+const OBS_TXT=["Blankt eller små krusningar","Små vågor utan vita toppar","Tydliga vågor, enstaka vita toppar","Många vita toppar","Hög, krabb sjö"];
+const loadObs=()=>{try{return JSON.parse(localStorage.getItem("obs")||"[]")}catch(_){return[]}};
+const saveObs=a=>{try{localStorage.setItem("obs",JSON.stringify(a))}catch(_){toast("Kunde inte spara observationen")}};
+// vad kartan visar på en plats just nu (samma beräkning som när man trycker på kartan)
+function predictedAt(ll){const la=laR?laAt(ll):null;if(la==null||la<0)return null;
+  const w=S.wind?windAt(ll.lat,ll.lng,S.ti):null,lu0=S.src==="egen"?S.own.sp:w?calcU(w):laWind?calcU(laWind):null;if(lu0==null)return null;
+  let hs=wave(lu0*leeAt(ll),la);
+  if(lastSW){const R2=lastSW.R,p=CRS.latLngToPoint(ll,R2.z),xx=Math.floor(p.x-R2.px0),yy=Math.floor(p.y-R2.py0);
+    if(xx>=0&&yy>=0&&xx<R2.W&&yy<R2.H){const i=yy*R2.W+xx;if(lastSW.H[i]>=0)hs=lastSW.H[i]}}
+  let k=0;while(hs>=LA_CLASSES[k][0])k++;return{k,hs,ws:w?w.ws:null,gust:w?w.gust:null,wd:w?w.wd:null}}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function settle(){await sleep(200);for(let i=0;i<80&&(busy||again);i++)await sleep(100)}
+// position: GPS om det finns, annars kartans mitt
+function getPos(){return new Promise(res=>{if(!navigator.geolocation){res(null);return}
+  navigator.geolocation.getCurrentPosition(p=>res({lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy}),()=>res(null),{enableHighAccuracy:true,timeout:8000,maximumAge:20000})})}
+// --- båtens gungning: vertikal acceleration ur telefonens sensorer, spektrum, våghöjd och period
+function fft(re,im){const n=re.length;for(let i=1,j=0;i<n;i++){let b=n>>1;for(;j&b;b>>=1)j^=b;j^=b;if(i<j){let t=re[i];re[i]=re[j];re[j]=t;t=im[i];im[i]=im[j];im[j]=t}}
+  for(let len=2;len<=n;len<<=1){const a=-2*Math.PI/len,wr=Math.cos(a),wi=Math.sin(a),h=len>>1;
+    for(let i=0;i<n;i+=len){let cr=1,ci=0;for(let j=0;j<h;j++){const p=i+j,q=p+h,vr=re[q]*cr-im[q]*ci,vi=re[q]*ci+im[q]*cr;
+        re[q]=re[p]-vr;im[q]=im[p]-vi;re[p]+=vr;im[p]+=vi;const t=cr*wr-ci*wi;ci=cr*wi+ci*wr;cr=t}}}}
+function analyzeMotion(rec){if(rec.length<200)return null;const t0=rec[0][0],T=(rec[rec.length-1][0]-t0)/1000;if(T<30)return null;
+  // tyngdkraftens riktning som glidande medel över ca 2 s; vertikal acceleration = projektion minus g
+  const fs=10,n=Math.floor(T*fs),az=new Float64Array(n),cnt=new Uint16Array(n);let gx=rec[0][1],gy=rec[0][2],gz=rec[0][3];
+  for(let i=0;i<rec.length;i++){const [t,x,y,z]=rec[i],dt=i?Math.min(.2,(t-rec[i-1][0])/1000):0,al=Math.min(1,dt/2);
+    gx+=(x-gx)*al;gy+=(y-gy)*al;gz+=(z-gz)*al;const g=Math.hypot(gx,gy,gz)||9.81,v=(x*gx+y*gy+z*gz)/g-g,b=Math.floor((t-t0)/1000*fs);
+    if(b>=0&&b<n){az[b]+=v;cnt[b]++}}
+  for(let i=0;i<n;i++)az[i]=cnt[i]?az[i]/cnt[i]:(i?az[i-1]:0);
+  // Welch-spektrum (256 punkter, 50 % överlapp, Hann-fönster)
+  const N=256;if(n<N)return null;const S=new Float64Array(N/2),win=new Float64Array(N);let w2=0;
+  for(let i=0;i<N;i++){win[i]=.5-.5*Math.cos(2*Math.PI*i/(N-1));w2+=win[i]*win[i]}
+  let segs=0;for(let s=0;s+N<=n;s+=N/2){let mu=0;for(let i=0;i<N;i++)mu+=az[s+i];mu/=N;const re=new Float64Array(N),im=new Float64Array(N);
+    for(let i=0;i<N;i++)re[i]=(az[s+i]-mu)*win[i];fft(re,im);for(let k=1;k<N/2;k++)S[k]+=2*(re[k]*re[k]+im[k]*im[k])/(fs*w2);segs++}
+  // från acceleration till höjd: dela med (2πf)^4, inom vågornas band (perioder 0,8 till 4 s)
+  const df=fs/N;let m0=0,best=0,fp=0;
+  for(let k=1;k<N/2;k++){const f=k*df;if(f<.25||f>1.25)continue;const e=S[k]/segs/Math.pow(2*Math.PI*f,4);m0+=e*df;if(e>best){best=e;fp=f}}
+  return{hs:4*Math.sqrt(m0),tp:fp?1/fp:null,dur:T}}
+let motion=null;
+async function measureMotion(sec,onTick){if(typeof DeviceMotionEvent==="undefined")throw new Error("Telefonen saknar rörelsesensor");
+  if(typeof DeviceMotionEvent.requestPermission==="function"){const p=await DeviceMotionEvent.requestPermission();if(p!=="granted")throw new Error("Rörelsesensorn fick inte användas")}
+  const rec=[],h=e=>{const a=e.accelerationIncludingGravity;if(a&&a.x!=null)rec.push([performance.now(),a.x,a.y,a.z])};
+  window.addEventListener("devicemotion",h);motion={stop:false};
+  for(let s=sec;s>0&&!motion.stop;s--){onTick(s);await sleep(1000)}
+  window.removeEventListener("devicemotion",h);const stopped=motion.stop;motion=null;if(stopped)return null;
+  if(rec.length<100)throw new Error("Fick inga mätvärden från rörelsesensorn");return analyzeMotion(rec)}
+function obsStats(){const a=loadObs().filter(o=>o.pk!=null);if(!a.length)return"Inga jämförbara observationer än.";
+  const n=a.length,hit=a.filter(o=>o.k===o.pk).length,near=a.filter(o=>Math.abs(o.k-o.pk)<=1).length,bias=a.reduce((s,o)=>s+(o.k-o.pk),0)/n;
+  const m=a.filter(o=>o.mhs!=null&&o.phs!=null&&o.phs>0.03);let mt="";
+  if(m.length){const r=m.map(o=>o.mhs/o.phs).sort((x,y)=>x-y),med=r[Math.floor(r.length/2)];mt=` Uppmätt våghöjd är i mitten ${f1(med)} gånger kartans (${m.length} mätningar).`}
+  const lean=Math.abs(bias)<.25?"ingen tydlig skevhet":bias>0?`kartan visar i snitt ${f1(bias)} klass för lugnt`:`kartan visar i snitt ${f1(-bias)} klass för grovt`;
+  return`${n} ${n===1?"observation":"observationer"}: rätt klass ${Math.round(hit/n*100)} %, högst en klass fel ${Math.round(near/n*100)} %, ${lean}.${mt}`}
+function obsCSV(){const a=loadObs(),hd="tid;lat;lon;noggrannhet_m;observerat;kartan;kartans_vaghojd_m;uppmatt_vaghojd_m;uppmatt_period_s;vind_ms;byar_ms;vindriktning;kalla";
+  const r=a.map(o=>[o.t,o.lat,o.lng,o.acc!=null?Math.round(o.acc):"",LA_CLASSES[o.k][1],o.pk!=null?LA_CLASSES[o.pk][1]:"",o.phs!=null?o.phs.toFixed(2):"",o.mhs!=null?o.mhs.toFixed(2):"",o.mtp!=null?o.mtp.toFixed(1):"",
+    o.ws!=null?o.ws.toFixed(1):"",o.gust!=null?o.gust.toFixed(1):"",o.wd!=null?Math.round(o.wd):"",o.src].join(";").replace(/\./g,","));
+  const b=new Blob(["\ufeff"+[hd,...r].join("\n")],{type:"text/csv"}),u=URL.createObjectURL(b),el=document.createElement("a");
+  el.href=u;el.download="sjoobservationer.csv";document.body.appendChild(el);el.click();el.remove();setTimeout(()=>URL.revokeObjectURL(u),2000)}
+async function obsOpen(){sel=null;if(pin){map.removeLayer(pin);pin=null}
+  $("sheetc").innerHTML=`<h3>Hur är sjön här?</h3><p class="note">Hämtar position …</p>`;$("sheet").classList.add("open");
+  const gp=await getPos(),c=map.getCenter(),pos=gp||{lat:c.lat,lng:c.lng,acc:null},ll=L.latLng(pos.lat,pos.lng);
+  // jämför med kartan för nuvarande timme, på din plats
+  if(S.ti!==nowIndex())setTime(nowIndex());if(!map.getBounds().pad(-.1).contains(ll))map.setView(ll,Math.max(map.getZoom(),13),{animate:false});
+  await settle();const pr=predictedAt(ll);
+  const mk=(k)=>`<button data-k="${k}"><i style="background:${LA_SOLID[k]}"></i><span>${LA_CLASSES[k][1]}<small>${OBS_TXT[k]}</small></span></button>`;
+  $("sheetc").innerHTML=`<h3>Hur är sjön här?</h3>
+    <p class="note" style="margin-top:2px">${gp?`Din position (±${Math.round(gp.acc)} m)`:"Ingen GPS: kartans mitt används"}${pr?` · kartan visar <b>${LA_CLASSES[pr.k][1].toLowerCase()}</b> (${fmtWave(pr.hs,pr.k)})`:" · kartan har ingen beräkning här"}</p>
+    <div class="obsb">${[0,1,2,3,4].map(mk).join("")}</div>
+    <label style="display:flex;gap:8px;align-items:flex-start;font:14px system-ui"><input type="checkbox" id="obsm" checked style="margin-top:3px"><span>Mät båtens gungning i 60 s<br><small style="color:#5A6770">Lägg telefonen still i båten, gärna mitt i, medan den mäter.</small></span></label>
+    <div id="obsmsg" class="note"></div>
+    <h3 style="margin-top:14px">Mina observationer</h3><p class="note" id="obsstat">${obsStats()}</p>
+    <div class="obsrow"><button id="obsexp">Exportera CSV</button><button id="obsclr">Rensa alla</button></div>`;
+  $("sheetc").querySelectorAll(".obsb button").forEach(b=>b.onclick=async()=>{const k=+b.dataset.k,o={t:new Date().toISOString(),lat:+pos.lat.toFixed(5),lng:+pos.lng.toFixed(5),acc:pos.acc,k,
+      pk:pr?pr.k:null,phs:pr?+pr.hs.toFixed(3):null,ws:pr?pr.ws:null,gust:pr?pr.gust:null,wd:pr?pr.wd:null,src:S.src+"/"+S.basis};
+    $("sheetc").querySelectorAll(".obsb button").forEach(x=>x.disabled=true);
+    if($("obsm").checked){const msg=$("obsmsg");msg.innerHTML=`Mäter … <b id="obscd">60</b> s <button id="obsstop" style="margin-left:8px">Avbryt</button>`;
+      $("obsstop").onclick=()=>{if(motion)motion.stop=true};
+      try{const r=await measureMotion(60,s=>{const e=$("obscd");if(e)e.textContent=s});
+        if(!r){msg.textContent="Mätningen avbröts, observationen sparades utan mätning.";}
+        else{o.mhs=+r.hs.toFixed(3);o.mtp=r.tp?+r.tp.toFixed(1):null;msg.innerHTML=`Uppmätt: ca <b>${f1(r.hs)} m</b>${r.tp?`, period ${f1(r.tp)} s`:""}. Små båtar följer inte de kortaste vågorna helt, så mätningen blir ofta något låg.`}}
+      catch(e){msg.textContent=e.message+". Observationen sparades utan mätning."}}
+    const a=loadObs();a.push(o);saveObs(a);toast("Observationen sparad");$("obsstat").textContent=obsStats();
+    $("sheetc").querySelectorAll(".obsb button").forEach(x=>x.disabled=false)});
+  $("obsexp").onclick=obsCSV;
+  $("obsclr").onclick=()=>{if(confirm("Ta bort alla sparade observationer?")){saveObs([]);$("obsstat").textContent=obsStats()}}}
+$("obs").onclick=obsOpen;
+$("close").addEventListener("click",()=>{if(motion)motion.stop=true});
+
 // ------------------------------------------------------------------ min position
 let me=null,watch=null;
 $("loc").onclick=()=>{if(me){map.setView(me.getLatLng(),Math.max(map.getZoom(),13));return}if(!navigator.geolocation){toast("Positionen är inte tillgänglig");return}
