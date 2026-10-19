@@ -144,7 +144,7 @@ let MASK_MAX=13,lastCoast=null,coastKey=null;
 async function drawCoast(){const zz=map.getZoom(),cz=Math.min(MASK_MAX,Math.max(11,zz)),bnd=map.getBounds().pad(.3),
   nw=CRS.latLngToPoint(bnd.getNorthWest(),cz),se=CRS.latLngToPoint(bnd.getSouthEast(),cz),x0=Math.floor(nw.x),y0=Math.floor(nw.y),W0=Math.ceil(se.x)-x0,H0=Math.ceil(se.y)-y0;
   // samma vy och samma inställningar som förra gången (till exempel nytt tidssteg): rita inte om
-  const ck=[zz,cz,x0,y0,W0,H0,S.land,S.layers.contours,!!S.terr,!!S.trees,!!S.osm,window.devicePixelRatio].join("|");
+  const ck=[zz,cz,x0,y0,W0,H0,S.land,S.layers.contours,!!S.terr,!!S.osm,window.devicePixelRatio].join("|");
   if(ck===coastKey&&lastCoast&&overlays.coast)return;
   const R=await region(cz,x0,y0,W0,H0),dpr=window.devicePixelRatio||1;
   let k=Math.pow(2,zz-cz)*dpr;k=Math.min(k,4096/W0,4096/H0);const h=k/2;
@@ -153,12 +153,8 @@ async function drawCoast(){const zz=map.getZoom(),cz=Math.min(MASK_MAX,Math.max(
   const loops=traceLoops(LAND,W0,H0,zz-cz>=1?2:1);lastCoast={loops,cz,x0,y0};
   // landyta innanför konturen, i sjökortsfärg (inte när vanlig karta är vald)
   const det=S.land==="detalj";
-  if(det){fillLoops(x,loops,h,OSM_COL.oppen);if(S.osm)drawDetail(x,cz,x0,y0,k,zz,loops,h,W0,H0);else osmLoad();
-    // terrängskuggning (markhöjd och träd) som skugga ovanpå detaljkartans färger
-    if(S.terr)drawTerrain(x,loops,h,cz,x0,y0,k,"multiply")}
-  else if(S.land!=="karta"){const lc=LANDCOL[S.land];fillLoops(x,loops,h,`rgba(${lc[0]},${lc[1]},${lc[2]},.94)`);
-    // terrängskuggning med skog ovanpå landfärgen, klippt till kustlinjen
-    if(S.terr&&S.layers.contours)drawTerrain(x,loops,h,cz,x0,y0,k)}
+  if(det){fillLoops(x,loops,h,OSM_COL.oppen);if(S.osm)drawDetail(x,cz,x0,y0,k,zz,loops,h,W0,H0);else osmLoad()}
+  else if(S.land!=="karta"){const lc=LANDCOL[S.land];fillLoops(x,loops,h,`rgba(${lc[0]},${lc[1]},${lc[2]},.94)`)}
   if(S.terr&&S.layers.contours)drawContours(x,cz,x0,y0,k,zz);
   // detaljkartan: blå strandlinje som hos Lantmäteriet, och bryggorna ovanpå
   strokeLoops(x,loops,h,det?"#2896E1":"#15191D",(det?1.3:1.5)*dpr);
@@ -216,63 +212,6 @@ function drawPiers(x,cz,x0,y0,k,zz,W0,H0){if(zz<13)return;const O=S.osm,N=256*Ma
   for(const f of O.p){if(!vis(f))continue;const a=f.a,n=a.length,closed=n>=8&&a[0]===a[n-2]&&a[1]===a[n-1],P=closed?fillB:lineB;
     P.moveTo((a[0]*N-x0)*k,(a[1]*N-y0)*k);for(let i=2;i<n;i+=2)P.lineTo((a[i]*N-x0)*k,(a[i+1]*N-y0)*k);if(closed)P.closePath()}
   x.fill(fillB);x.stroke(lineB)}
-// ------------------------------------------------------------------ satellit (Sentinel-2)
-// Vass, grumligt vatten eller alger från satellitbilder (data/satellit), som en färgad bild över vattnet.
-const SATC={};
-function satLoad(k){if(SATC[k])return SATC[k];
-  SATC[k]=new Promise((res,rej)=>{const im=new Image();im.onload=()=>{const M=S.satMeta,[lo,hi]=M.skalor[k],c=document.createElement("canvas");c.width=im.width;c.height=im.height;
-      const g=c.getContext("2d");g.drawImage(im,0,0);const D=g.getImageData(0,0,c.width,c.height),d=D.data,n=c.width*c.height;
-      // grumlighet och alger: färgskalan efter fördelningen i bilden (2 och 98 procent)
-      let p2=lo,p98=hi;if(k!=="vass"){const hist=new Uint32Array(256);let tot=0;for(let i=0;i<n;i++){const q=d[i*4];if(q){hist[q]++;tot++}}
-        let acc=0,a2=-1,a98=-1;for(let q=1;q<256;q++){acc+=hist[q];if(a2<0&&acc>=tot*.02)a2=q;if(a98<0&&acc>=tot*.98)a98=q}
-        p2=lo+(a2-1)/254*(hi-lo);p98=lo+(a98-1)/254*(hi-lo)}
-      const ramp=k==="alger"?[[40,90,150],[70,150,130],[90,170,50]]:[[30,75,145],[90,150,170],[180,140,80]];
-      for(let i=0;i<n;i++){const q=d[i*4];if(!q){d[i*4+3]=0;continue}const v=lo+(q-1)/254*(hi-lo);
-        if(k==="vass"){if(v<.22){d[i*4+3]=0;continue}const a=Math.min(1,(v-.22)/.35);d[i*4]=30;d[i*4+1]=115;d[i*4+2]=30;d[i*4+3]=Math.round(90+150*a)}
-        else{const t=Math.max(0,Math.min(1,(v-p2)/Math.max(1e-6,p98-p2))),j=t<.5?0:1,u=t<.5?t*2:t*2-1,A=ramp[j],B=ramp[j+1];
-          for(let ch=0;ch<3;ch++)d[i*4+ch]=Math.round(A[ch]+(B[ch]-A[ch])*u);d[i*4+3]=150}}
-      g.putImageData(D,0,0);res(c)};im.onerror=()=>{delete SATC[k];rej()};im.src="data/satellit/"+k+".png"});
-  return SATC[k]}
-let satAttr=false;
-async function drawSat(){const k=S.sat,M=S.satMeta;
-  if(!k||!M){if(overlays.sat){map.removeLayer(overlays.sat);delete overlays.sat}legend();return}
-  let c;try{c=await satLoad(k)}catch(_){toast("Satellitbilden kunde inte laddas");return}
-  if(S.sat!==k)return;
-  const b=L.latLngBounds([M.lat0-M.ny*M.dlat,M.lon0],[M.lat0,M.lon0+M.nx*M.dlon]);let o=overlays.sat;
-  if(!o){o=overlays.sat=new CanvasOverlay("",b,{pane:"sat",interactive:false}).addTo(map)}else o.setBounds(b);
-  const e=o.getElement();e.width=c.width;e.height=c.height;const g=e.getContext("2d");g.clearRect(0,0,e.width,e.height);g.drawImage(c,0,0);
-  if(!satAttr){map.attributionControl.addAttribution("Satellit: Copernicus Sentinel-2");satAttr=true}
-  legend()}
-
-// Terrängskuggning: markhöjd från Lantmäteriet plus trädhöjd från Skogsstyrelsen, skuggad med ljuset
-// från nordväst som på en terrängkarta. Skog tonas grön och blir upphöjd, så att berg och skogsdungar
-// får djup. Bilden byggs en gång (rader jämnt fördelade i kartans projektion) och skalas sedan.
-let terrImg=null,terrKey=null;
-function terrainImage(){const T=S.terr,tr=S.trees,det=S.land==="detalj",lc=det?[255,255,255]:LANDCOL[S.land];if(!T||!lc)return null;
-  const key=S.land+"|"+(tr?1:0);if(terrKey===key)return terrImg;
-  const nx=T.nx,ny=T.ny,RAD=Math.PI/180,merc=lat=>Math.log(Math.tan(Math.PI/4+lat*RAD/2));
-  const yT=merc(T.lat0),yB=merc(T.lat0-ny*T.dlat);
-  // höjd (mark + träd) i meter, rad för rad i kartans projektion
-  const Z=new Float32Array(nx*ny),C=new Float32Array(nx*ny),G=new Uint8Array(nx*ny);
-  for(let r=0;r<ny;r++){const lat=(2*Math.atan(Math.exp(yT+(r+.5)*(yB-yT)/ny))-Math.PI/2)/RAD,fy=Math.max(0,Math.min(ny-1.001,(T.lat0-lat)/T.dlat-.5)),y0=fy|0,ty=fy-y0;
-    for(let c=0;c<nx;c++){const a=y0*nx+c,b=a+nx,g=T.H[a]*(1-ty)+T.H[b]*ty,tv=tr?(tr[a]*(1-ty)+tr[b]*ty):0,i=r*nx+c;
-      G[i]=g>.5?1:0;C[i]=G[i]?tv:0;Z[i]=g+C[i]}}
-  const dxm=T.dlon*111320*Math.cos((T.lat0-ny*T.dlat/2)*RAD),dym=T.dlat*111320,EX=1.6;
-  const az=315*RAD,el=40*RAD,Lx=Math.cos(el)*Math.sin(az),Ly=Math.cos(el)*Math.cos(az),Lz=Math.sin(el);
-  const FOREST=[150,182,120],cv=document.createElement("canvas");cv.width=nx;cv.height=ny;
-  const g2=cv.getContext("2d"),img=g2.createImageData(nx,ny),d=img.data;
-  for(let r=0;r<ny;r++)for(let c=0;c<nx;c++){const i=r*nx+c;if(!G[i])continue;
-    const zx=(Z[r*nx+Math.min(nx-1,c+1)]-Z[r*nx+Math.max(0,c-1)])/(2*dxm)*EX,zy=(Z[Math.max(0,r-1)*nx+c]-Z[Math.min(ny-1,r+1)*nx+c])/(2*dym)*EX;
-    const nl=Math.hypot(zx,zy,1),sh=Math.max(0,(-zx*Lx-zy*Ly+Lz)/nl)/Lz;          // 1 = plan mark
-    const f=det?0:Math.min(1,C[i]/8),v=det?Math.max(.62,Math.min(1,.7+.3*sh)):Math.max(.55,Math.min(1.12,.62+.38*sh));
-    for(let j=0;j<3;j++)d[i*4+j]=Math.min(255,(lc[j]*(1-f)+FOREST[j]*f)*v);d[i*4+3]=240}
-  g2.putImageData(img,0,0);terrImg={cv,yT,yB};terrKey=key;return terrImg}
-function drawTerrain(x,loops,h,cz,x0,y0,k,blend){const T=S.terr,I=terrainImage();if(!I)return;
-  const N=256*Math.pow(2,cz),PX=v=>(v-2)*h,R2=180/Math.PI;
-  const left=((T.lon0+180)/360*N-x0)*k,right=((T.lon0+T.nx*T.dlon+180)/360*N-x0)*k;
-  const top=((.5-I.yT/(2*Math.PI))*N-y0)*k,bot=((.5-I.yB/(2*Math.PI))*N-y0)*k;
-  x.save();x.beginPath();for(const p of loops){x.moveTo(PX(p[0][0]),PX(p[0][1]));for(let i=1;i<p.length;i++)x.lineTo(PX(p[i][0]),PX(p[i][1]));x.closePath()}
-  x.clip("evenodd");x.imageSmoothingEnabled=true;if(blend)x.globalCompositeOperation=blend;x.drawImage(I.cv,left,top,right-left,bot-top);x.restore()}
 // Höjdkurvor på land ur Lantmäteriets höjdmodell (data/terrang.json, ca 20 m mellan punkterna).
 // Tätare kurvor ju mer man zoomar in; var femte kurva är lite kraftigare.
 let contourCache={key:null,lev:null};
