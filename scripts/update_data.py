@@ -19,7 +19,7 @@ import os
 import time
 import urllib.request
 
-from common import BOUNDS, DATA, DAYS_BACK
+from common import AREA as BOUNDS, DATA, DAYS_BACK
 
 SMHI = "https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/{lon}/lat/{lat}/data.json"
 MET = "https://api.met.no/weatherapi/locationforecast/2.0/complete?lat={lat}&lon={lon}"
@@ -314,8 +314,11 @@ def ensure_private():
     """Bygger zonerna runt hus och bryggor om de saknas, högst 10 minuter per körning.
     Färdiga delar sparas, så att nästa körning fortsätter där den här slutade."""
     from common import MASK
-    if (MASK / "privat" / "info.json").exists():
-        return
+    try:
+        if json.loads((MASK / "privat" / "info.json").read_text()).get("bounds") == BOUNDS:
+            return
+    except Exception:  # noqa: BLE001
+        pass
     try:
         import build_mask
         with_time_limit(14 * 60, lambda: build_mask.build_private(10 * 60))
@@ -491,11 +494,6 @@ if __name__ == "__main__":
         with_time_limit(28 * 60, lambda: swan_run.build_swan(25 * 60))
     except Exception as ex:  # noqa: BLE001
         print(f"SWAN kunde inte köras ({ex}), försöker igen nästa körning")
-    try:
-        import vag_fas
-        with_time_limit(14 * 60, lambda: vag_fas.build(12 * 60))
-    except Exception as ex:  # noqa: BLE001
-        print(f"Vågfaserna kunde inte räknas ({ex}), försöker igen nästa körning")
     if manual:
         print("Manuell körning: hemfridszonerna byggs i de automatiska körningarna")
     else:
