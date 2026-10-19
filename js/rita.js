@@ -69,7 +69,8 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
       if(S.find.tmin==null){S.find.tmin=Math.floor(lo);S.find.tmax=Math.ceil(hi);syncFind()}}
     laT=TV;
     // djup per vattenpunkt (för djupskiktet och djupfiltret i Hitta plats)
-    const patMode=(S.wstyle==="monster"||S.wstyle==="rorlig")&&haveLa&&Lyr.la&&!F_.on;
+    // sjögången visas alltid som färgzoner med vågkammarnas linjer ovanpå
+    const patMode=haveLa&&Lyr.la&&!F_.on;
     const hasD=!!(S.depth||S.depthP),useDF=F_.on&&hasD&&(F_.dmin>0||F_.dmax<60),needD=hasD&&(Lyr.depth||useDF);let DV=null,DB=null;
     if(needD){DV=new Float32Array(N);DB=new Int16Array(N).fill(-999)}
     if(needD&&S.depth){const G=S.depth,Dg=G.D,GW=G.nx,rowF=new Float32Array(R.H),colF=new Float32Array(R.W);
@@ -100,8 +101,8 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     hideCanvas();
     const showD=!!(hasD&&Lyr.depth&&DB),pat=patMode&&!!KARR;
     let RELIEF=null;if(pat&&S.wstyle==="rorlig"&&reliefPossible(w.wd)){RELIEF=new Float32Array(N);for(let q=0;q<nwi;q++){const i=WI[q];RELIEF[i]=HS(i)}}
-    drawZones(R,vx0,vy0,vx1,vy1,mz,{RELIEF,FOK,KARR:pat?null:KARR,KPAT:pat?KARR:null,BAND:(showT||findOn)?BAND:null,
-      tempFill:showT&&!showLa&&!findOn&&!showD,wdir:w?w.wd:null,wspd:w?(S.src==="egen"?S.own.sp:calcU(w)):null,SW:pat?SW:null,FV:pat?F:null,UV:pat?UF:null,mpz:m,DB:showD?DB:null,depthFill:showD&&((!showLa&&!findOn)||pat),priv:privOn?R.priv:null});
+    drawZones(R,vx0,vy0,vx1,vy1,mz,{RELIEF,FOK,KARR,KPAT:pat?KARR:null,BAND:(showT||findOn)?BAND:null,
+      tempFill:showT&&!showLa&&!findOn&&!showD,wdir:w?w.wd:null,wspd:w?(S.src==="egen"?S.own.sp:calcU(w)):null,SW:pat?SW:null,FV:pat?F:null,UV:pat?UF:null,mpz:m,DB:showD?DB:null,depthFill:showD&&!showLa&&!findOn,priv:privOn?R.priv:null});
     // etiketter: namn först, sedan vindpilar, vattentemperatur och sjögång, utan krockar
     const boxes=placeNames();drawArrows(boxes,true);
     if(showT||findOn)placeLabels(boxes,zoneCands(R,BAND,mz,vx0,vy0,vx1,vy1,b=>{const s=(b*tStep)+"–"+((b+1)*tStep)+"°";return{html:'<div class="zlbl">'+s+'</div>',w:s.length*7+6,h:16}},5,260,30),zoneLayer);
