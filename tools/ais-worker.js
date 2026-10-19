@@ -14,9 +14,11 @@ const AREA = [[59.15, 18.0], [60.5, 19.4]];      // Stockholms skärgård (lat, 
 const LISTEN_MS = 7000;                           // hur länge varje anrop lyssnar
 const REFRESH_MS = 12000;                         // lyssna inte oftare än så, svara med det sparade emellan
 const KEEP_MS = 15 * 60 * 1000;                   // glöm fartyg som inte hörts av på 15 minuter
+// felsökning: svaret innehåller "diag" med antal meddelanden från aisstream, typer, eventuellt felmeddelande
+// från aisstream och hur anslutningen stängdes
 const ORIGINS = ["https://jungefeldt.github.io"]; // sidor som får använda tjänsten
 
-let SHIPS = null, LAST = 0, KV_SAVED = 0;
+let SHIPS = null, LAST = 0, KV_SAVED = 0, DIAG = null;
 
 function cors(req) {
   const o = req.headers.get("Origin") || "";
@@ -29,9 +31,12 @@ function cors(req) {
 
 function handle(raw) {
   let m;
-  try { m = JSON.parse(typeof raw === "string" ? raw : new TextDecoder().decode(raw)); } catch (_) { return; }
+  try { m = JSON.parse(typeof raw === "string" ? raw : new TextDecoder().decode(raw)); } catch (_) { DIAG.bad++; return; }
+  DIAG.msgs++;
+  if (m.error || m.Error) { DIAG.server = String(m.error || m.Error); return; }   // till exempel ogiltig nyckel
   const md = m.MetaData || {}, id = md.MMSI;
   if (!id) return;
+  if (m.MessageType) DIAG.types[m.MessageType] = (DIAG.types[m.MessageType] || 0) + 1;
   const s = SHIPS[id] || (SHIPS[id] = { id });
   if (md.ShipName && md.ShipName.trim()) s.n = md.ShipName.trim();
   const msg = m.Message || {};
@@ -56,6 +61,8 @@ function handle(raw) {
 }
 
 async function listen(env) {
+  DIAG = { msgs: 0, bad: 0, types: {}, server: null, close: null, ms: 0 };
+  const t0 = Date.now();
   const r = await fetch("https://stream.aisstream.io/v0/stream", { headers: { Upgrade: "websocket" } });
   const ws = r.webSocket;
   if (!ws) throw new Error("aisstream svarade inte med en WebSocket (" + r.status + ")");
@@ -65,9 +72,10 @@ async function listen(env) {
   await new Promise(res => {
     const t = setTimeout(res, LISTEN_MS);
     ws.addEventListener("message", ev => handle(ev.data));
-    ws.addEventListener("close", () => { clearTimeout(t); res(); });
-    ws.addEventListener("error", () => { clearTimeout(t); res(); });
+    ws.addEventListener("close", ev => { DIAG.close = (ev.code || "") + (ev.reason ? " " + ev.reason : ""); clearTimeout(t); res(); });
+    ws.addEventListener("error", ev => { DIAG.close = "fel: " + (ev.message || "okänt"); clearTimeout(t); res(); });
   });
+  DIAG.ms = Date.now() - t0;
   try { ws.close(1000, "klar"); } catch (_) {}
 }
 
@@ -84,6 +92,6 @@ export default {
     // spara till KV högst en gång i minuten (gratisnivån tillåter 1 000 skrivningar per dygn)
     if (env.AIS && now - KV_SAVED > 60000) { KV_SAVED = now; ctx.waitUntil(env.AIS.put("ships", JSON.stringify(SHIPS), { expirationTtl: 3600 })); }
     const ships = Object.values(SHIPS).filter(s => s.lat != null);
-    return new Response(JSON.stringify({ t: now, err, ships }), { headers: { ...h, "Content-Type": "application/json", "Cache-Control": "no-store" } });
+    return new Response(JSON.stringify({ t: now, err, diag: DIAG, ships }), { headers: { ...h, "Content-Type": "application/json", "Cache-Control": "no-store" } });
   },
 };
