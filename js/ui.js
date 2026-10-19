@@ -70,7 +70,7 @@ function legend(){const L_=$("legend"),w=laWind||domainWind(S.ti);let h="";
 .wscale .ws-st{margin-bottom:5px;white-space:nowrap}.wscale .ws-st b{font-size:12px}.wscale .ws-row{display:flex;gap:0}.wscale .ws-row svg{display:block}
 .wscale .ws-ax{position:relative;height:13px;margin-top:2px}.wscale .ws-ax span{position:absolute;transform:translateX(-50%);font-weight:500;color:#40505A}`;document.head.appendChild(st)})();
 function waveSwatch(k,w,h){const gap=[0,6,8,11,14][k];let d="";if(gap)for(let x0=3;x0<w;x0+=gap)d+=` M${x0} 1 Q${x0+k+1} ${h/2} ${x0} ${h-1}`;
-  if(!k)return`<svg width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="${LA_SOLID[0]}"/><path d="M4 5 q1.5 -1.5 3 0 t3 0 M18 10 q1.5 -1.5 3 0 t3 0" fill="none" stroke="rgba(35,75,115,.55)" stroke-width=".8" stroke-linecap="round"/></svg>`;
+  if(!k)return`<svg width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="${LA_SOLID[0]}"/><path d="M9 7 q2 -2.5 4 0 t4 0 t4 0" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/><path d="M9 7 q2 -2.5 4 0 t4 0 t4 0" fill="none" stroke="rgb(70,140,195)" stroke-width="1.2" stroke-linecap="round"/></svg>`;
   return`<svg width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="${LA_SOLID[k]}"/>${d?`<path d="${d}" fill="none" stroke="#11171c" stroke-opacity="${CREST_O[k]}" stroke-width="${Math.max(.7,CREST_W[k]*.8)}"/>`:""}</svg>`}
 function waveScale(st,w){const el=$("wscale");if(!el)return;if(!st||!w){el.hidden=true;return}
   const U=S.src==="egen"?S.own.sp:w.ws,gust=S.src==="egen"?null:w.gust,wind=`${U<.5?"":dirName(w.wd)+" "}${f0(U)} m/s${gust!=null&&gust>U+.5?", byar "+f0(gust):""}`;
