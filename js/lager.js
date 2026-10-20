@@ -140,12 +140,15 @@ function drawZones(R,vx0,vy0,vx1,vy1,mz,Z){const mg=4,cx0=Math.max(0,vx0-R.px0-m
     drawCrestSet(0);startAnim()}
   else{crestSet=null;hideCanvas("crests")}
   if(!relief)reliefHide()}
-let MASK_MAX=13,lastCoast=null,coastKey=null;
-async function drawCoast(){const zz=map.getZoom(),cz=Math.min(MASK_MAX,Math.max(11,zz)),bnd=map.getBounds().pad(.3),
-  nw=CRS.latLngToPoint(bnd.getNorthWest(),cz),se=CRS.latLngToPoint(bnd.getSouthEast(),cz),x0=Math.floor(nw.x),y0=Math.floor(nw.y),W0=Math.ceil(se.x)-x0,H0=Math.ceil(se.y)-y0;
-  // samma vy och samma inställningar som förra gången (till exempel nytt tidssteg): rita inte om
-  const ck=[zz,cz,x0,y0,W0,H0,S.land,S.layers.contours,!!S.terr,!!S.osm,window.devicePixelRatio].join("|");
-  if(ck===coastKey&&lastCoast&&overlays.coast)return;
+let MASK_MAX=13,lastCoast=null,coastKey=null,coastExt=null;
+// Land och kustlinje ritas med en marginal runt det som syns (45 % åt varje håll). Så länge kartan bara
+// flyttas inom den och inget annat ändrats ritas de inte om, och kanterna är redan färdiga när man drar.
+async function drawCoast(){const zz=map.getZoom(),cz=Math.min(MASK_MAX,Math.max(11,zz)),vb=map.getBounds(),
+  vnw=CRS.latLngToPoint(vb.getNorthWest(),cz),vse=CRS.latLngToPoint(vb.getSouthEast(),cz);
+  if(S.land==="detalj")osmEnsure();
+  const ck=[zz,cz,S.land,S.layers.contours,!!S.terr,S.osmGen||0,window.devicePixelRatio].join("|"),E=coastExt;
+  if(ck===coastKey&&lastCoast&&overlays.coast&&E&&vnw.x>=E.x0&&vnw.y>=E.y0&&vse.x<=E.x0+E.W0&&vse.y<=E.y0+E.H0)return;
+  const px=(vse.x-vnw.x)*.45,py=(vse.y-vnw.y)*.45,x0=Math.floor(vnw.x-px),y0=Math.floor(vnw.y-py),W0=Math.ceil(vse.x+px)-x0,H0=Math.ceil(vse.y+py)-y0;
   const R=await region(cz,x0,y0,W0,H0),dpr=window.devicePixelRatio||1;
   let k=Math.pow(2,zz-cz)*dpr;k=Math.min(k,4096/W0,4096/H0);const h=k/2;
   const x=overlayCanvas("coast",cz,x0,y0,W0,H0,k),LAND=new Uint8Array(W0*H0);for(let i=0;i<LAND.length;i++)LAND[i]=R.water[i]?0:1;
@@ -153,15 +156,17 @@ async function drawCoast(){const zz=map.getZoom(),cz=Math.min(MASK_MAX,Math.max(
   const loops=traceLoops(LAND,W0,H0,zz-cz>=1?2:1);lastCoast={loops,cz,x0,y0};
   // landyta innanför konturen, i sjökortsfärg (inte när vanlig karta är vald)
   const det=S.land==="detalj";
-  if(det){fillLoops(x,loops,h,OSM_COL.oppen);if(S.osm)drawDetail(x,cz,x0,y0,k,zz,loops,h,W0,H0);else osmLoad()}
+  if(det){fillLoops(x,loops,h,OSM_COL.oppen);if(S.osm)drawDetail(x,cz,x0,y0,k,zz,loops,h,W0,H0)}
   else if(S.land!=="karta"){const lc=LANDCOL[S.land];fillLoops(x,loops,h,`rgba(${lc[0]},${lc[1]},${lc[2]},.94)`)}
   if(S.terr&&S.layers.contours)drawContours(x,cz,x0,y0,k,zz);
   // detaljkartan: blå strandlinje som hos Lantmäteriet, och bryggorna ovanpå
   strokeLoops(x,loops,h,det?"#2896E1":"#15191D",(det?1.3:1.5)*dpr);
-  if(det&&S.osm){drawReeds(x,cz,x0,y0,k,zz,W0,H0);drawPiers(x,cz,x0,y0,k,zz,W0,H0)}coastKey=ck}
+  if(det&&S.osm){drawReeds(x,cz,x0,y0,k,zz,W0,H0);drawPiers(x,cz,x0,y0,k,zz,W0,H0)}coastKey=ck;coastExt={x0,y0,W0,H0}}
 // ------------------------------------------------------------------ detaljkarta (OpenStreetMap)
-// Hus, bryggor, vägar, stigar och marktyper från OpenStreetMap (data/osm/detalj.json), ritade i
-// Lantmäteriets stil ovanpå appens egen kustlinje. Laddas först när Detalj väljs.
+// Hus, bryggor, vägar, stigar och marktyper från OpenStreetMap, ritade i Lantmäteriets stil ovanpå
+// appens egen kustlinje. Datan ligger i rutor om 0,1 x 0,05 grader (data/osm/r/, listade i
+// data/osm/index.json); bara rutorna kring det som syns hämtas, från zoom 12. Finns inga rutor än
+// används den äldre filen för testområdet (data/osm/detalj.json).
 const OSM_COL={oppen:"rgb(255,252,226)",skog:"rgb(214,237,193)",bebyggd:"rgb(244,206,152)",industri:"rgb(225,205,190)",
   aker:"rgb(250,240,190)",berg:"rgb(232,228,215)",vatmark:"rgb(214,232,214)",strand:"rgb(250,240,200)"};
 const OSM_ORDER=["skog","aker","oppen","vatmark","berg","strand","industri","bebyggd"];
@@ -176,18 +181,36 @@ function drawReeds(x,cz,x0,y0,k,zz,W0,H0){if(zz<12)return;const O=S.osm,N=256*Ma
       g.beginPath();g.moveTo(s*.3,s*.85);g.lineTo(s*.3,s*.35);g.moveTo(s*.5,s*.85);g.lineTo(s*.5,s*.2);g.moveTo(s*.7,s*.85);g.lineTo(s*.7,s*.4);g.moveTo(s*.2,s*.85);g.lineTo(s*.8,s*.85);g.stroke();reedPat={s,p:x.createPattern(c,"repeat")}}
     x.fillStyle=reedPat.p;x.fill(P,"evenodd")}
   x.strokeStyle="rgba(70,120,55,.7)";x.lineWidth=.8*dpr;x.stroke(P)}
-let osmLoading=false;
-function osmLoad(){if(S.osm||osmLoading)return;osmLoading=true;
-  getJSON("data/osm/detalj.json").then(D=>{const o=D.origin,s=D.scale,RAD=Math.PI/180;
-    // koordinaterna räknas om till kartans projektion (0-1) en gång, med en ruta runt varje objekt för snabb gallring
-    const prep=(c,cls)=>{const a=new Float64Array(c.length);let x0=1,y0=1,x1=0,y1=0;
-      for(let i=0;i<c.length;i+=2){const lon=o[0]+c[i]/s,sn=Math.sin((o[1]+c[i+1]/s)*RAD),mx=(lon+180)/360,my=.5-Math.log((1+sn)/(1-sn))/(4*Math.PI);
-        a[i]=mx;a[i+1]=my;if(mx<x0)x0=mx;if(mx>x1)x1=mx;if(my<y0)y0=my;if(my>y1)y1=my}
-      return{a,bb:[x0,y0,x1,y1],c:cls}};
-    S.osm={b:D.b.map(c=>prep(c)),p:D.p.map(c=>prep(c)),v:D.v.map(([cl,c,nm])=>Object.assign(prep(c,cl),{nm:nm||""})),l:D.l.map(([cl,c])=>prep(c,cl)),
-      q:(D.q||[]).map(([t,x,y,nm])=>{const f=prep([x,y]);return{t,mx:f.a[0],my:f.a[1],nm:nm||""}})};
-    coastKey=null;schedule()})
-    .catch(()=>{osmLoading=false;toast("Detaljkartan är inte klar än, försöker igen senare")})}
+const OSM_T=new Map();let osmIdx=null,osmIdxLoading=false,osmLegacy=false;
+// koordinaterna räknas om till kartans projektion (0-1) en gång, med en ruta runt varje objekt för snabb gallring
+function osmPrep(D){const o=D.o||D.origin,s=D.scale,RAD=Math.PI/180;
+  const prep=(c,cls)=>{const a=new Float64Array(c.length);let x0=1,y0=1,x1=0,y1=0;
+    for(let i=0;i<c.length;i+=2){const lon=o[0]+c[i]/s,sn=Math.sin((o[1]+c[i+1]/s)*RAD),mx=(lon+180)/360,my=.5-Math.log((1+sn)/(1-sn))/(4*Math.PI);
+      a[i]=mx;a[i+1]=my;if(mx<x0)x0=mx;if(mx>x1)x1=mx;if(my<y0)y0=my;if(my>y1)y1=my}
+    return{a,bb:[x0,y0,x1,y1],c:cls}};
+  return{b:D.b.map(c=>prep(c)),p:D.p.map(c=>prep(c)),v:D.v.map(([cl,c,nm])=>Object.assign(prep(c,cl),{nm:nm||""})),l:D.l.map(([cl,c])=>prep(c,cl)),
+    q:(D.q||[]).map(([t,x,y,nm])=>{const f=prep([x,y]);return{t,mx:f.a[0],my:f.a[1],nm:nm||""}})}}
+// slår ihop de laddade rutorna nära det som syns till S.osm, som ritfunktionerna använder
+function osmMerge(keys){const O={b:[],p:[],v:[],l:[],q:[]},seenQ=new Set();
+  for(const k of keys){const T=OSM_T.get(k);if(!T||T.loading)continue;for(const f of ["b","p","v","l"])for(const e of T[f])O[f].push(e);
+    for(const q of T.q){const id=q.t+Math.round(q.mx*1e7)+"_"+Math.round(q.my*1e7);if(!seenQ.has(id)){seenQ.add(id);O.q.push(q)}}}
+  S.osm=O;S.osmGen=(S.osmGen||0)+1}
+let osmKeys="";
+function osmEnsure(){
+  if(!osmIdx){if(osmIdxLoading)return;osmIdxLoading=true;
+    getJSON("data/osm/index.json").then(I=>{osmIdx=I;if(!Object.keys(I.done||{}).length)throw 0;coastKey=null;schedule()})
+      .catch(()=>{osmIdx={done:{}};osmLegacy=true;getJSON("data/osm/detalj.json").then(D=>{OSM_T.set("legacy",osmPrep(D));osmMerge(["legacy"]);coastKey=null;schedule()})
+        .catch(()=>toast("Detaljkartan är inte klar än"))});return}
+  if(osmLegacy||map.getZoom()<12)return;
+  const I=osmIdx,b=map.getBounds().pad(.6),x0=Math.floor((b.getWest()-I.lon0)/I.dlon),x1=Math.floor((b.getEast()-I.lon0)/I.dlon),
+    y0=Math.floor((b.getSouth()-I.lat0)/I.dlat),y1=Math.floor((b.getNorth()-I.lat0)/I.dlat),want=[];
+  for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++){const k=x+"_"+y;if(I.done[k])want.push(k)}
+  for(const k of want)if(!OSM_T.has(k)){OSM_T.set(k,{loading:true});
+    getJSON(`data/osm/r/${k}.json?v=${I.done[k]}`).then(D=>{OSM_T.set(k,osmPrep(D));osmKeys="";coastKey=null;schedule()}).catch(()=>OSM_T.delete(k))}
+  // glöm rutor långt bort, så att minnet inte växer när man flyttar sig över hela skärgården
+  if(OSM_T.size>48)for(const k of [...OSM_T.keys()])if(!want.includes(k)&&OSM_T.size>48)OSM_T.delete(k);
+  const key=want.filter(k=>OSM_T.has(k)&&!OSM_T.get(k).loading).join(",");
+  if(key!==osmKeys){osmKeys=key;osmMerge(key?key.split(","):[])}}
 function osmView(cz,x0,y0,W0,H0){const N=256*Math.pow(2,cz),v=[x0/N,y0/N,(x0+W0)/N,(y0+H0)/N];
   return f=>!(f.bb[2]<v[0]||f.bb[0]>v[2]||f.bb[3]<v[1]||f.bb[1]>v[3])}
 function osmPath(x,f,N,x0,y0,k,close){const a=f.a;x.moveTo((a[0]*N-x0)*k,(a[1]*N-y0)*k);for(let i=2;i<a.length;i+=2)x.lineTo((a[i]*N-x0)*k,(a[i+1]*N-y0)*k);if(close)x.closePath()}
