@@ -19,6 +19,17 @@ const fmtStep=v=>(Math.round(v*100)/100).toString().replace(".",",");
 let seq=0,busy=false,again=false;
 // släpper fram webbläsaren mellan tunga steg, så att vågor och pilar fortsätter röra sig under omräkningen
 const yieldUI=()=>new Promise(r=>setTimeout(r,0));
+// Zonerna ritas med en marginal runt det som syns (40 % åt varje håll). Flyttas kartan bara inom den,
+// och inget annat har ändrats, räknas inget om: bara etiketterna placeras om (lastDraw sparar underlaget).
+let lastDraw=null;
+const drawKey=()=>{const F_=S.find;return[S.ti,S.src,S.basis,S.own.dir,S.own.sp,S.land,S.wstyle,
+  S.layers.la,S.layers.temp,S.layers.waves,S.layers.priv,S.layers.depth,F_.on,F_.maxK,F_.tmin,F_.tmax,F_.dmin,F_.dmax,
+  !!S.temp,!!S.depth,!!S.depthP,!!S.swan,!!S.vind,!!S.privOk,!!S.wind].join("|")};
+function zoneLabels(D,boxes,mz,vx0,vy0,vx1,vy1){const R=D.R;
+  if(D.showT||D.findOn)placeLabels(boxes,zoneCands(R,D.BAND,mz,vx0,vy0,vx1,vy1,b=>{const s=(b*tStep)+"–"+((b+1)*tStep)+"°";return{html:'<div class="zlbl">'+s+'</div>',w:s.length*7+6,h:16}},5,260,30),zoneLayer);
+  if(D.showD)placeLabels(boxes,zoneCands(R,D.DB,mz,vx0,vy0,vx1,vy1,b=>{const s=depthTxt(b);return{html:'<div class="dlbl">'+s+'</div>',w:s.length*6.6+6,h:15}},5,280,30),zoneLayer);
+  if(D.showLa&&D.KARR&&S.layers.waves)placeLabels(boxes,zoneCands(R,D.KARR,mz,vx0,vy0,vx1,vy1,(k,i)=>{const h=D.HS(i),a=fmtWave(h,k),b2=LA_CLASSES[k][1].replace(" sjö","").toLowerCase();
+    return{html:'<div class="slbl">'+waveIcon(k)+'<b>'+a+'</b><em>'+b2+'</em></div>',w:Math.max(a.length,b2.length)*7.2+14,h:46}},8,240,40),seaLayer)}
 async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
   try{lblLayer.clearLayers();zoneLayer.clearLayers();seaLayer.clearLayers();
     const Lyr=S.layers,F_=S.find,needLa=Lyr.la||F_.on,needT=Lyr.temp||F_.on,di=needT?tempDay():-1;
@@ -26,18 +37,25 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     hideCanvas("tint");
     const privOn=S.privOk&&Lyr.priv;
     const zz=map.getZoom(),mz=zz<=10?11:zz<=13?12:13,b=map.getBounds(),nw=CRS.latLngToPoint(b.getNorthWest(),mz),se=CRS.latLngToPoint(b.getSouthEast(),mz);
-    let x0=Math.floor(nw.x),y0=Math.floor(nw.y),x1=Math.ceil(se.x),y1=Math.ceil(se.y);const vx0=x0,vy0=y0,vx1=x1,vy1=y1;
+    const vx0=Math.floor(nw.x),vy0=Math.floor(nw.y),vx1=Math.ceil(se.x),vy1=Math.ceil(se.y),dkey=drawKey(),D0=lastDraw;
+    // bara förflyttning inom det redan ritade: placera om etiketterna och klart
+    if(D0&&D0.dkey===dkey&&D0.mz===mz&&D0.zz===zz&&vx0>=D0.ex0&&vy0>=D0.ey0&&vx1<=D0.ex1&&vy1<=D0.ey1){
+      await drawCoast();if(my!==seq)return;
+      const boxes=placeNames();drawArrows(boxes,true);zoneLabels(D0,boxes,mz,vx0,vy0,vx1,vy1);legend();return}
+    // det som ritas: det som syns plus 40 % åt varje håll
+    const mx=Math.round((vx1-vx0)*.4),my2=Math.round((vy1-vy0)*.4),ex0=vx0-mx,ey0=vy0-my2,ex1=vx1+mx,ey1=vy1+my2;
+    let x0=ex0,y0=ey0,x1=ex1,y1=ey1;
     const m=mpp(mz,map.getCenter().lat),cap=CAP_M/m;
     if(haveLa){const th=w.wd*Math.PI/180,ux=Math.sin(th),uy=-Math.cos(th);if(ux>-0.4)x1+=cap;if(ux<0.4)x0-=cap;if(uy<0.4)y0-=cap;if(uy>-0.4)y1+=cap;
       x0=Math.floor(x0);y0=Math.floor(y0);x1=Math.ceil(x1);y1=Math.ceil(y1)}
     const R=await region(mz,x0,y0,x1-x0,y1-y0);if(my!==seq)return;const N=R.W*R.H,WA=R.water;
     lastR=R;
-    // fönstret: det som syns plus en liten marginal; allt som räknas per punkt räknas bara här
-    const wx0=Math.max(0,vx0-R.px0-10),wx1=Math.min(R.W,vx1-R.px0+10),wy0=Math.max(0,vy0-R.py0-10),wy1=Math.min(R.H,vy1-R.py0+10),win=[wx0,wx1,wy0,wy1];
+    // fönstret: det som ritas plus en liten marginal; allt som räknas per punkt räknas bara här
+    const wx0=Math.max(0,ex0-R.px0-10),wx1=Math.min(R.W,ex1-R.px0+10),wy0=Math.max(0,ey0-R.py0-10),wy1=Math.min(R.H,ey1-R.py0+10),win=[wx0,wx1,wy0,wy1];
     let nwi=0;const WI=new Int32Array(Math.max(0,(wx1-wx0)*(wy1-wy0)));for(let y=wy0;y<wy1;y++){const o=y*R.W;for(let x=wx0;x<wx1;x++)if(WA[o+x])WI[nwi++]=o+x}
     // kustlinje: skarp vektorlinje i skärmens upplösning, som på ett sjökort
     await drawCoast();if(my!==seq)return;await yieldUI();
-    if(!haveLa&&!haveT&&!privOn&&!((S.depth||S.depthP)&&Lyr.depth)){waveScale(null);hideCanvas();hideCanvas("zones");hideCanvas("crests");crestSet=null;reliefHide();laR=null;laT=null;drawArrows(placeNames(),true);legend();if(sel)sheet();return}
+    if(!haveLa&&!haveT&&!privOn&&!((S.depth||S.depthP)&&Lyr.depth)){waveScale(null);hideCanvas();hideCanvas("zones");hideCanvas("crests");crestSet=null;reliefHide();laR=null;laT=null;lastDraw=null;drawArrows(placeNames(),true);legend();if(sel)sheet();return}
     // lä
     // riktningen avrundas till 5 grader; samma vy och riktning återanvänder beräkningen (snabb uppspelning)
     let F=null;if(haveLa){const dr=Math.round(w.wd/5)*5,key=[mz,R.px0,R.py0,R.W,R.H,dr].join("|");
@@ -101,14 +119,11 @@ async function redraw(){if(busy){again=true;return}busy=true;const my=++seq;
     hideCanvas();
     const showD=!!(hasD&&Lyr.depth&&DB),pat=patMode&&!!KARR;
     let RELIEF=null;if(pat&&S.wstyle==="rorlig"&&reliefPossible(w.wd)){RELIEF=new Float32Array(N);for(let q=0;q<nwi;q++){const i=WI[q];RELIEF[i]=HS(i)}}
-    drawZones(R,vx0,vy0,vx1,vy1,mz,{RELIEF,FOK,KARR,KPAT:pat?KARR:null,BAND:(showT||findOn)?BAND:null,
+    drawZones(R,ex0,ey0,ex1,ey1,mz,{RELIEF,FOK,KARR,KPAT:pat?KARR:null,BAND:(showT||findOn)?BAND:null,
       tempFill:showT&&!showLa&&!findOn&&!showD,wdir:w?w.wd:null,wspd:w?(S.src==="egen"?S.own.sp:calcU(w)):null,SW:pat?SW:null,FV:pat?F:null,UV:pat?UF:null,mpz:m,DB:showD?DB:null,depthFill:showD&&!showLa&&!findOn,priv:privOn?R.priv:null});
     // etiketter: namn först, sedan vindpilar, vattentemperatur och sjögång, utan krockar
-    const boxes=placeNames();drawArrows(boxes,true);
-    if(showT||findOn)placeLabels(boxes,zoneCands(R,BAND,mz,vx0,vy0,vx1,vy1,b=>{const s=(b*tStep)+"–"+((b+1)*tStep)+"°";return{html:'<div class="zlbl">'+s+'</div>',w:s.length*7+6,h:16}},5,260,30),zoneLayer);
-    if(showD)placeLabels(boxes,zoneCands(R,DB,mz,vx0,vy0,vx1,vy1,b=>{const s=depthTxt(b);return{html:'<div class="dlbl">'+s+'</div>',w:s.length*6.6+6,h:15}},5,280,30),zoneLayer);
-    if(showLa&&KARR&&S.layers.waves)placeLabels(boxes,zoneCands(R,KARR,mz,vx0,vy0,vx1,vy1,(k,i)=>{const h=HS(i),a=fmtWave(h,k),b2=LA_CLASSES[k][1].replace(" sjö","").toLowerCase();
-      return{html:'<div class="slbl">'+waveIcon(k)+'<b>'+a+'</b><em>'+b2+'</em></div>',w:Math.max(a.length,b2.length)*7.2+14,h:46}},8,240,40),seaLayer);
+    lastDraw={dkey,mz,zz,ex0,ey0,ex1,ey1,R,BAND,DB,KARR,HS,showT,findOn,showD,showLa};
+    const boxes=placeNames();drawArrows(boxes,true);zoneLabels(lastDraw,boxes,mz,vx0,vy0,vx1,vy1);
     legend();if(sel)sheet()}
   catch(e){console.error(e)}
   finally{busy=false;if(again){again=false;redraw()}}}
