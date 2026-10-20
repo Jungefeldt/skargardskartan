@@ -467,7 +467,7 @@ if __name__ == "__main__":
         print(f"Båtturer kunde inte hämtas ({ex}), försöker igen nästa körning")
     try:
         import osm_detalj
-        with_time_limit(8 * 60, lambda: osm_detalj.build(6 * 60))
+        with_time_limit(12 * 60, lambda: osm_detalj.build(10 * 60))
     except Exception as ex:  # noqa: BLE001
         print(f"Detaljer från OpenStreetMap kunde inte hämtas ({ex}), försöker igen nästa körning")
     try:
