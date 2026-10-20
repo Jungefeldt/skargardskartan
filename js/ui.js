@@ -231,17 +231,35 @@ function aisKind(t){if(t==null)return["okänd typ","#555"];if(t>=60&&t<70)return
   if(t===50)return["lotsbåt","#8A6D00"];if(t===51)return["räddningsfartyg","#8A6D00"];if(t===36)return["segelbåt","#6A4C93"];if(t===37)return["fritidsbåt","#6A4C93"];
   if(t>=40&&t<50)return["snabbgående fartyg","#1F5F82"];return["övrigt fartyg","#555"]}
 const KN=.5144;
-function aisIcon(s,c,z,dir){const mv=s.sog!=null&&s.sog>=.5,big=(s.len||0)>=80,sz=big?32:24;
+// namn med vanliga versaler och gemener: "VIKING CINDERELLA" blir "Viking Cinderella"
+const shipName=n=>n?n.toLowerCase().replace(/(^|[\s\-\/.(])([a-zåäöéü])/g,(m,a,b)=>a+b.toUpperCase()).replace(/\b(Ab|Af|Ii|Iii|Iv|Mv|Ms)\b/g,x=>x.toUpperCase()):"";
+// destinationen skrivs in för hand ombord; vanliga hamnkoder (UN/LOCODE) i Östersjön översätts till namn
+const PORTS={SESTO:"Stockholm",SEKPS:"Kapellskär",SENYN:"Nynäshamn",SEVXO:"Vaxholm",SESOE:"Södertälje",SENOK:"Norrtälje",SEGRS:"Grisslehamn",
+  SEHAN:"Hargshamn",SEOXE:"Oxelösund",SEVBY:"Visby",SEGVX:"Gävle",SEUME:"Umeå",SELLA:"Luleå",SEGOT:"Göteborg",SEMMA:"Malmö",SENRK:"Norrköping",
+  FIMHQ:"Mariehamn",FILRS:"Långnäs",FIEKE:"Eckerö",FITKU:"Åbo",FIHEL:"Helsingfors",FINLI:"Nådendal",FIKOK:"Karleby",FIVAA:"Vasa",FIRAU:"Raumo",
+  EETLL:"Tallinn",EEPLA:"Paldiski",LVRIX:"Riga",LVVNT:"Ventspils",LTKLJ:"Klaipėda",PLGDN:"Gdańsk",PLGDY:"Gdynia",DEROS:"Rostock",DEKEL:"Kiel",
+  DETRV:"Travemünde",DKCPH:"Köpenhamn",RULED:"Sankt Petersburg",RUULU:"Ust-Luga"};
+function shipDest(d){if(!d)return"";const s=d.trim().replace(/[>]+/g," > ").replace(/\s+/g," ");if(!s||/^[@.\s]*$/.test(s))return"";
+  // "SE STO > FI MHQ" eller "SESTO-FIMHQ": sista hamnen är slutdestinationen
+  const U=s.toUpperCase(),codes=[];for(const m of U.matchAll(/([A-Z]{2})[\s_]?([A-Z]{3})/g)){const k=m[1]+m[2];if(PORTS[k])codes.push(PORTS[k])}
+  if(codes.length)return codes[codes.length-1];
+  const parts=s.split(/\s*(?:=>|->|>|-|\/)\s*/).filter(Boolean);return shipName(parts[parts.length-1]||s)}
+function aisIcon(s,c,z,dir,left){const mv=s.sog!=null&&s.sog>=.5,big=(s.len||0)>=80,sz=big?32:24;
   const shape=mv?`<svg width="${sz}" height="${sz}" viewBox="-10 -10 20 20" style="transform:rotate(${dir.toFixed(0)}deg);transition:transform .8s"><path d="M0 -9 L6 7 L0 4 L-6 7 Z" fill="${c}" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg>`
     :`<svg width="${sz*.7}" height="${sz*.7}" viewBox="-6 -6 12 12"><circle r="4.2" fill="${c}" stroke="#fff" stroke-width="1.6"/></svg>`;
-  const nm=z>=13&&s.n?`<span style="position:absolute;left:50%;top:${sz/2+2}px;transform:translateX(-50%);white-space:nowrap;font:700 11px system-ui;color:${c};text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 3px #fff">${s.n.replace(/</g,"&lt;")}</span>`:"";
+  // namn och destination bredvid symbolen: till höger, eller till vänster nära kartans högra kant
+  const halo="text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 3px #fff,0 0 4px #fff",dst=shipDest(s.dest),off=(mv?sz:sz*.7)/2+3;
+  const nm=z>=12&&s.n?`<span style="position:absolute;${left?`right:${off}px;text-align:right`:`left:${off}px`};top:50%;transform:translateY(-50%);white-space:nowrap;line-height:1.15;pointer-events:none">`+
+    `<b style="display:block;font:700 12px system-ui;color:${c};${halo}">${esc(shipName(s.n))}</b>`+
+    (dst&&z>=12?`<span style="display:block;font:600 10.5px system-ui;color:#2B3A44;${halo}">→ ${esc(dst)}</span>`:"")+`</span>`:"";
   return L.divIcon({className:"",html:`<div style="position:relative;transform:translate(-50%,-50%);display:inline-block">${shape}${nm}</div>`,iconSize:[0,0]})}
-function aisDraw(){if(!aisData||!S.layers.ais)return;const z=map.getZoom(),b=map.getBounds().pad(.2),seen=new Set();
+function aisDraw(){if(!aisData||!S.layers.ais)return;const z=map.getZoom(),b=map.getBounds().pad(.2),seen=new Set(),W=map.getSize().x;
   for(const s of aisData.ships){const [lat,lon,age,dir]=aisPos(s);if(age>900||!b.contains([lat,lon]))continue;seen.add(s.id);
-    const [kind,c]=aisKind(s.type),key=[z>=13,s.sog!=null&&s.sog>=.5,Math.round(dir/3),c,(s.len||0)>=80,s.n].join("|");let m=aisMk.get(s.id);
-    if(!m){m=L.marker([lat,lon],{pane:"lbl",icon:aisIcon(s,c,z,dir),keyboard:false,zIndexOffset:500}).addTo(aisLayer);m._k=key;aisMk.set(s.id,m);
+    const left=map.latLngToContainerPoint([lat,lon]).x>W-190;
+    const [kind,c]=aisKind(s.type),key=[z>=12,s.sog!=null&&s.sog>=.5,Math.round(dir/3),c,(s.len||0)>=80,s.n,s.dest,left].join("|");let m=aisMk.get(s.id);
+    if(!m){m=L.marker([lat,lon],{pane:"lbl",icon:aisIcon(s,c,z,dir,left),keyboard:false,zIndexOffset:500}).addTo(aisLayer);m._k=key;aisMk.set(s.id,m);
       m.on("click",e=>{L.DomEvent.stopPropagation(e);clearTimeout(tapT);aisSheet(s.id)})}
-    else{m.setLatLng([lat,lon]);if(m._k!==key){m.setIcon(aisIcon(s,c,z,dir));m._k=key}}
+    else{m.setLatLng([lat,lon]);if(m._k!==key){m.setIcon(aisIcon(s,c,z,dir,left));m._k=key}}
     const segs=aisTrack(s,lat,lon);let tr=aisTr.get(s.id);
     if(segs.length){if(!tr){tr=L.polyline(segs,{color:c,weight:2.4,opacity:.6,lineCap:"round",lineJoin:"round",interactive:false}).addTo(aisTrk);aisTr.set(s.id,tr)}
       else{tr.setLatLngs(segs);tr.setStyle({color:c})}}
@@ -250,9 +268,10 @@ function aisDraw(){if(!aisData||!S.layers.ais)return;const z=map.getZoom(),b=map
   for(const [id,tr] of aisTr)if(!seen.has(id)){aisTrk.removeLayer(tr);aisTr.delete(id)}}
 function aisSheet(id){const s=aisData&&aisData.ships.find(x=>x.id===id);if(!s)return;const [kind]=aisKind(s.type),[,,age]=aisPos(s);
   const ag=age<90?`${Math.round(age)} s`:`${Math.round(age/60)} min`;
-  $("sheetc").innerHTML=`<h3>${s.n?s.n.replace(/</g,"&lt;"):"Fartyg utan namn"}</h3><dl class="kv"><dt>Typ</dt><dd>${kind}${s.len?`, ${s.len} m`:""}</dd>
+  const dst=shipDest(s.dest);
+  $("sheetc").innerHTML=`<h3>${s.n?esc(shipName(s.n)):"Fartyg utan namn"}</h3><dl class="kv"><dt>Typ</dt><dd>${kind}${s.len?`, ${s.len} m`:""}</dd>
     <dt>Fart</dt><dd>${s.sog!=null?`${f1(s.sog)} knop (${f1(s.sog*KN*3.6)} km/h)`:"okänd"}</dd><dt>Kurs</dt><dd>${s.cog!=null?Math.round(s.cog)+"°":"okänd"}</dd>
-    ${s.dest?`<dt>Destination</dt><dd>${s.dest.replace(/</g,"&lt;")}</dd>`:""}<dt>Senaste position</dt><dd>för ${ag} sedan</dd><dt>MMSI</dt><dd>${s.id}</dd></dl>
+    <dt>Destination</dt><dd>${dst?esc(dst)+(dst.toUpperCase()!==s.dest.trim().toUpperCase()?` <span style="font-weight:500;color:var(--muted)">(${esc(s.dest.trim())})</span>`:""):"inte angiven"}</dd><dt>Senaste position</dt><dd>för ${ag} sedan</dd><dt>MMSI</dt><dd>${s.id}</dd></dl>
     <p class="note">Fartyget visas ungefär en halv minut i efterhand, längs de positioner det rapporterat. Får inte användas för navigering.</p>`;$("sheet").classList.add("open")}
 async function aisPoll(){if(!S.layers.ais||document.hidden)return;const u=aisUrl();if(!u)return;
   let r;try{r=await fetch(u,{cache:"no-store"})}catch(_){toast("Fartygen kunde inte hämtas: ingen kontakt med "+u.replace(/^https?:\/\//,""));return}
