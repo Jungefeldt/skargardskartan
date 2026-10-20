@@ -11,11 +11,12 @@
 //                  även när Cloudflare startar om tjänsten
 
 const AREA = [[59.15, 18.0], [60.5, 19.4]];      // Stockholms skärgård (lat, lon), samma som kartans område
-const LISTEN_MS = 7000;                           // hur länge varje anrop lyssnar
-const REFRESH_MS = 12000;                         // lyssna inte oftare än så, svara med det sparade emellan
+const LISTEN_MS = 9000;                           // hur länge varje anrop lyssnar
+const REFRESH_MS = 10000;                         // lyssna inte oftare än så, svara med det sparade emellan
 const KEEP_MS = 15 * 60 * 1000;                   // glöm fartyg som inte hörts av på 15 minuter
 const TRACK_MS = 30 * 60 * 1000;                  // spår: var fartygen har varit de senaste 30 minuterna
-const TRACK_STEP_MS = 60 * 1000, TRACK_STEP_M = 40; // ny spårpunkt efter en minut eller 40 m
+const TRACK_STEP_MS = 15 * 1000, TRACK_STEP_M = 20; // ny spårpunkt efter 15 s eller 20 m, så att svängar syns
+const TRACK_MAX = 240;                            // högst så många punkter per fartyg
 // felsökning: svaret innehåller "diag" med antal meddelanden från aisstream, typer, eventuellt felmeddelande
 // från aisstream och hur anslutningen stängdes
 const ORIGINS = ["https://jungefeldt.github.io"]; // sidor som får använda tjänsten
@@ -62,16 +63,20 @@ async function handle(raw) {
   const p = msg.PositionReport || msg.StandardClassBPositionReport || msg.ExtendedClassBPositionReport;
   if (p && md.latitude != null && md.longitude != null && Math.abs(md.latitude) <= 90) {
     s.lat = +md.latitude.toFixed(5); s.lon = +md.longitude.toFixed(5);
-    // spårpunkt: [lat, lon, tid], högst en per minut om fartyget inte flyttat sig mer än 40 m
-    const now = Date.now(), h = s.h || (s.h = []), q = h[h.length - 1];
+    // spårpunkt: [lat, lon, tid]; tiden tas från aisstream när den finns
+    const tu = Date.parse(String(md.time_utc || "").replace(" +0000 UTC", "Z").replace(/\.(\d{3})\d*/, ".$1").replace(" ", "T"));
+    const now = Number.isFinite(tu) && Math.abs(tu - Date.now()) < 120000 ? tu : Date.now(), h = s.h || (s.h = []), q = h[h.length - 1];
     const moved = q ? Math.hypot((s.lat - q[0]) * 111320, (s.lon - q[1]) * 111320 * Math.cos(s.lat * Math.PI / 180)) : Infinity;
-    if (!q || moved > TRACK_STEP_M || now - q[2] > TRACK_STEP_MS) h.push([s.lat, s.lon, now]);
+    if (!q || (now > q[2] && (moved > TRACK_STEP_M || now - q[2] > TRACK_STEP_MS))) h.push([s.lat, s.lon, now]);
     s.sog = p.Sog != null && p.Sog < 102.3 ? p.Sog : null;
     s.cog = p.Cog != null && p.Cog < 360 ? p.Cog : null;
     s.hdg = p.TrueHeading != null && p.TrueHeading < 360 ? p.TrueHeading : null;
     if (p.NavigationalStatus != null) s.nav = p.NavigationalStatus;
+    // girhastighet i grader per minut (AIS anger den kodad; 128 betyder att den saknas, 127 att den är för stor)
+    const r = p.RateOfTurn;
+    s.rot = r != null && Math.abs(r) < 127 ? Math.round(Math.sign(r) * (r / 4.733) ** 2 * 10) / 10 : null;
     s.b = !msg.PositionReport;                    // klass B (mindre fartyg och båtar)
-    s.t = Date.now();
+    s.t = now;
   }
   const st = msg.ShipStaticData || (msg.StaticDataReport && msg.StaticDataReport.ReportB);
   if (st) {
@@ -116,7 +121,7 @@ export default {
     for (const k in SHIPS) {
       const s = SHIPS[k];
       if (!s.t || now - s.t > KEEP_MS) { delete SHIPS[k]; continue; }
-      if (s.h) { s.h = s.h.filter(p => now - p[2] <= TRACK_MS); if (s.h.length > 120) s.h = s.h.slice(-120); }
+      if (s.h) { s.h = s.h.filter(p => now - p[2] <= TRACK_MS); if (s.h.length > TRACK_MAX) s.h = s.h.slice(-TRACK_MAX); }
     }
     // spara till KV högst en gång i minuten (gratisnivån tillåter 1 000 skrivningar per dygn)
     if (env.AIS && now - KV_SAVED > 60000) { KV_SAVED = now; ctx.waitUntil(env.AIS.put("ships", JSON.stringify(SHIPS), { expirationTtl: 3600 })); }
