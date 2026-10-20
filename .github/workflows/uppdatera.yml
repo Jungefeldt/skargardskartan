@@ -53,7 +53,11 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data mask
           git diff --cached --quiet || git commit -m "Ny data $(date -u +%Y-%m-%dT%H:%MZ)"
-          git push
+          # hämta det som ändrats i förrådet under körningen och lägg den nya datan ovanpå
+          for i in 1 2 3; do
+            git pull --rebase -X theirs origin main && git push && break
+            sleep 10
+          done
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
