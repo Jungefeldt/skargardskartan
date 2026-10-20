@@ -124,7 +124,7 @@ $("explain").onclick=()=>{let h=`<h3>Färger för lä och sjögång</h3><p class
     <h3>Höjdkurvor</h3><p class="note" style="margin-top:2px">Höjdkurvorna på land kommer från Lantmäteriets laserskannade höjdmodell. Avståndet mellan kurvorna är 10 m, och 5 m när man zoomat in; var femte kurva är kraftigare.</p>
     <h3>Detaljkarta</h3><p class="note" style="margin-top:2px"><b>Detalj</b> ritar hus, bryggor, vägar med namn, stigar, skog, bebyggelse, vassbälten och platser (färjeläge, hamn, båtramp, bränsle, affär, restaurang, badplats med mera) från OpenStreetMap i samma stil som Lantmäteriets karta, ovanpå appens egen kustlinje. Hur detaljerat det blir beror på hur väl området är karterat.</p>
     <h3>Eget djup</h3><p class="note" style="margin-top:2px">Med <b>Eget djup</b> längst ner i panelen kopplar du in ett eget, privat djup (till exempel uträknat från sjökortsbilder). Det hämtas från ett privat förråd med en nyckel som bara sparas i den här webbläsaren, och används där det finns; utanför används EMODnet.${S.depthP?" Eget djup är kopplat.":""}</p>
-    <h3>Fartyg (AIS)</h3><p class="note" style="margin-top:2px">Med <b>Fartyg</b> visas fartyg som sänder AIS, till exempel färjor, Waxholmsbåtar och fraktfartyg, via en egen mellanstation och aisstream.io. Fartygen visas ungefär en halv minut i efterhand och flyttas längs sitt verkliga spår, så att de svänger där fartyget svängde. Pilar är fartyg i rörelse, prickar ligger still, och strecket bakom visar var fartyget har åkt de senaste 30 minuterna. De flesta fritidsbåtar har inte AIS, och täckningen beror på frivilliga mottagare. Får inte användas för navigering.</p>
+    <h3>Fartyg (AIS)</h3><p class="note" style="margin-top:2px">Med <b>Fartyg</b> visas fartyg som sänder AIS, till exempel färjor, Waxholmsbåtar och fraktfartyg, via en egen mellanstation och aisstream.io. Fartygen visas ungefär en halv minut i efterhand och flyttas längs sitt verkliga spår, så att de svänger där fartyget svängde. Pilar är fartyg i rörelse, prickar ligger still, och strecket bakom visar var fartyget har åkt de senaste 30 minuterna. Waxholmsbåtar och andra skärgårdsbåtar matchas mot tidtabellerna från Trafiklab (SL och Strömma), och då visas turens slutstation, nästa brygga och ungefärlig försening. De flesta fritidsbåtar har inte AIS, och täckningen beror på frivilliga mottagare. Får inte användas för navigering.</p>
     <h3>Djup</h3><p class="note" style="margin-top:2px">Djupzonerna kommer från EMODnet Bathymetry (DTM 2024). I svenska vatten är underlaget medvetet glesat av sekretesskäl, så djupen är ungefärliga: bra för att skilja grunda vikar från djupa fjärdar, men enskilda grund, kanter och smala sund syns inte. "Nära lodning" betyder att det finns en verklig mätning i närheten, "uppskattat" att djupet är uträknat från omgivningen.</p>
     <p class="note">Uppskattningen tar inte hänsyn till dyning, strömmar eller båttrafik, och vågor böjer runt små öar. Använd den som stöd, inte för navigering.</p>`;
   $("sheetc").innerHTML=h;$("sheet").classList.add("open")};
@@ -244,19 +244,52 @@ function shipDest(d){if(!d)return"";const s=d.trim().replace(/[>]+/g," > ").repl
   const U=s.toUpperCase(),codes=[];for(const m of U.matchAll(/([A-Z]{2})[\s_]?([A-Z]{3})/g)){const k=m[1]+m[2];if(PORTS[k])codes.push(PORTS[k])}
   if(codes.length)return codes[codes.length-1];
   const parts=s.split(/\s*(?:=>|->|>|-|\/)\s*/).filter(Boolean);return shipName(parts[parts.length-1]||s)}
+// ------------------------------------------------------------------ båtturer enligt tidtabell
+// Waxholmsbåtar och andra skärgårdsbåtar matchas mot tidtabellerna (data/batturer.json, från Trafiklab):
+// båtens spår de senaste minuterna jämförs med var varje tur borde vara enligt tidtabellen, med upp
+// till 10 minuters försening eller tidigareläggning. Den tur som stämmer bäst väljs, om den stämmer
+// tillräckligt bra. Matchningen sparas per fartyg och görs om var 30:e sekund.
+let BT=null,btLoading=false;const btMatch=new Map();
+function btLoad(){if(BT||btLoading)return;btLoading=true;
+  getJSON("data/batturer.json").then(D=>{const S2=D.stops,base=D.dates.map(d=>new Date(+d.slice(0,4),+d.slice(4,6)-1,+d.slice(6,8)).getTime());
+    BT=D.trips.map(([ri,head,di,seq])=>{const pts=[];for(let i=0;i<seq.length;i+=3){const s=S2[seq[i]];pts.push({n:s[0],lat:s[1],lon:s[2],a:base[di]+seq[i+1]*1000,d:base[di]+seq[i+2]*1000})}
+      const r=D.routes[ri];return{route:r,head,pts,t0:pts[0].d,t1:pts[pts.length-1].a}});aisDraw()})
+    .catch(()=>{btLoading=false})}
+// var turen borde vara vid tiden t (enligt tidtabellen): vid bryggan under uppehållet, annars rakt emellan
+function btPos(tr,t){const P=tr.pts;if(t<=P[0].d)return P[0];if(t>=P[P.length-1].a)return P[P.length-1];
+  for(let i=0;i<P.length-1;i++){const a=P[i],b=P[i+1];if(t<=a.d)return a;if(t<b.a){const f=(t-a.d)/Math.max(1,b.a-a.d);return{lat:a.lat+(b.lat-a.lat)*f,lon:a.lon+(b.lon-a.lon)*f}}}
+  return P[P.length-1]}
+const distM=(a,b)=>Math.hypot((a.lat-b.lat)*111320,(a.lon-b.lon)*111320*Math.cos(a.lat*Math.PI/180));
+function btFind(s){if(!BT)return null;const pass=s.type==null||(s.type>=60&&s.type<70)||(s.type>=40&&s.type<50);if(!pass||(s.len||0)>110)return null;
+  const old=btMatch.get(s.id),now=aisNow();if(old&&now-old.at<30000)return old.m;
+  const h=aisPts(s).filter(p=>now-p[2]<=12*60000);let m=null;
+  if(h.length>=4&&h[h.length-1][2]-h[0][2]>=90000){
+    const step=Math.max(1,Math.floor(h.length/10)),smp=h.filter((_,i)=>i%step===0||i===h.length-1).map(p=>({lat:p[0],lon:p[1],t:p[2]}));
+    const moved=distM(smp[0],smp[smp.length-1])>150,last=smp[smp.length-1];let best=null;
+    for(const tr of BT){if(now<tr.t0-20*60000||now>tr.t1+20*60000)continue;
+      if(!tr.pts.some(p=>distM(p,last)<15000))continue;
+      for(let sh=-10;sh<=10;sh++){const dl=sh*60000;let sum=0;for(const q of smp)sum+=distM(q,btPos(tr,q.t-dl));const sc=sum/smp.length;
+        if(!best||sc<best.sc)best={tr,dl,sc}}}
+    // tillräckligt nära, och båten har rört sig (en båt vid kaj kan passa vilken tur som helst)
+    if(best&&best.sc<1200&&moved)m={tr:best.tr,delay:best.dl}}
+  // utan ny matchning (till exempel vid brygga) behålls den senaste i högst 15 minuter
+  const good=m||(old&&old.good&&now-old.goodAt<15*60000?old.good:null);
+  btMatch.set(s.id,{at:now,m:good,good,goodAt:m?now:old?old.goodAt:0});return good}
+function btNext(m){const ts=aisNow()-AIS_LAG-m.delay;return m.tr.pts.find(p=>p.a>=ts)||null}
+const hhmm=t=>{const d=new Date(t);return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0")};
 function aisIcon(s,c,z,dir,left){const mv=s.sog!=null&&s.sog>=.5,big=(s.len||0)>=80,sz=big?32:24;
   const shape=mv?`<svg width="${sz}" height="${sz}" viewBox="-10 -10 20 20" style="transform:rotate(${dir.toFixed(0)}deg);transition:transform .8s"><path d="M0 -9 L6 7 L0 4 L-6 7 Z" fill="${c}" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg>`
     :`<svg width="${sz*.7}" height="${sz*.7}" viewBox="-6 -6 12 12"><circle r="4.2" fill="${c}" stroke="#fff" stroke-width="1.6"/></svg>`;
   // namn och destination bredvid symbolen: till höger, eller till vänster nära kartans högra kant
-  const halo="text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 3px #fff,0 0 4px #fff",dst=shipDest(s.dest),off=(mv?sz:sz*.7)/2+3;
+  const bm=btFind(s),halo="text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 3px #fff,0 0 4px #fff",dst=bm?bm.tr.head:shipDest(s.dest),off=(mv?sz:sz*.7)/2+3;
   const nm=z>=12&&s.n?`<span style="position:absolute;${left?`right:${off}px;text-align:right`:`left:${off}px`};top:50%;transform:translateY(-50%);white-space:nowrap;line-height:1.15;pointer-events:none">`+
     `<b style="display:block;font:700 12px system-ui;color:${c};${halo}">${esc(shipName(s.n))}</b>`+
     (dst&&z>=12?`<span style="display:block;font:600 10.5px system-ui;color:#2B3A44;${halo}">→ ${esc(dst)}</span>`:"")+`</span>`:"";
   return L.divIcon({className:"",html:`<div style="position:relative;transform:translate(-50%,-50%);display:inline-block">${shape}${nm}</div>`,iconSize:[0,0]})}
 function aisDraw(){if(!aisData||!S.layers.ais)return;const z=map.getZoom(),b=map.getBounds().pad(.2),seen=new Set(),W=map.getSize().x;
   for(const s of aisData.ships){const [lat,lon,age,dir]=aisPos(s);if(age>900||!b.contains([lat,lon]))continue;seen.add(s.id);
-    const left=map.latLngToContainerPoint([lat,lon]).x>W-190;
-    const [kind,c]=aisKind(s.type),key=[z>=12,s.sog!=null&&s.sog>=.5,Math.round(dir/3),c,(s.len||0)>=80,s.n,s.dest,left].join("|");let m=aisMk.get(s.id);
+    const left=map.latLngToContainerPoint([lat,lon]).x>W-190,bm=btFind(s);
+    const [kind,c]=aisKind(s.type),key=[z>=12,s.sog!=null&&s.sog>=.5,Math.round(dir/3),c,(s.len||0)>=80,s.n,s.dest,left,bm?bm.tr.head:""].join("|");let m=aisMk.get(s.id);
     if(!m){m=L.marker([lat,lon],{pane:"lbl",icon:aisIcon(s,c,z,dir,left),keyboard:false,zIndexOffset:500}).addTo(aisLayer);m._k=key;aisMk.set(s.id,m);
       m.on("click",e=>{L.DomEvent.stopPropagation(e);clearTimeout(tapT);aisSheet(s.id)})}
     else{m.setLatLng([lat,lon]);if(m._k!==key){m.setIcon(aisIcon(s,c,z,dir,left));m._k=key}}
@@ -268,10 +301,14 @@ function aisDraw(){if(!aisData||!S.layers.ais)return;const z=map.getZoom(),b=map
   for(const [id,tr] of aisTr)if(!seen.has(id)){aisTrk.removeLayer(tr);aisTr.delete(id)}}
 function aisSheet(id){const s=aisData&&aisData.ships.find(x=>x.id===id);if(!s)return;const [kind]=aisKind(s.type),[,,age]=aisPos(s);
   const ag=age<90?`${Math.round(age)} s`:`${Math.round(age/60)} min`;
-  const dst=shipDest(s.dest);
-  $("sheetc").innerHTML=`<h3>${s.n?esc(shipName(s.n)):"Fartyg utan namn"}</h3><dl class="kv"><dt>Typ</dt><dd>${kind}${s.len?`, ${s.len} m`:""}</dd>
+  const dst=shipDest(s.dest),bm=btFind(s);let tur="";
+  if(bm){const r=bm.tr.route,nx=btNext(bm),dm=Math.round(bm.delay/60000),line=r[1]||(r[0]?"linje "+r[0]:"");
+    tur=`<dt>Tur</dt><dd>${esc(r[2]||"")}${line?`, ${esc(line)}`:""}, mot ${esc(bm.tr.head)}</dd>`+
+      (nx?`<dt>Nästa brygga</dt><dd>${esc(nx.n)}, ${hhmm(nx.a)} enligt tidtabellen${Math.abs(dm)>=1?` <span style="font-weight:500;color:var(--muted)">(ca ${Math.abs(dm)} min ${dm>0?"sen":"tidig"})</span>`:""}</dd>`:"")+
+      `<dt>Slutstation</dt><dd>${esc(bm.tr.pts[bm.tr.pts.length-1].n)}, ${hhmm(bm.tr.t1+bm.delay)}</dd>`}
+  $("sheetc").innerHTML=`<h3>${s.n?esc(shipName(s.n)):"Fartyg utan namn"}</h3><dl class="kv"><dt>Typ</dt><dd>${kind}${s.len?`, ${s.len} m`:""}</dd>${tur}
     <dt>Fart</dt><dd>${s.sog!=null?`${f1(s.sog)} knop (${f1(s.sog*KN*3.6)} km/h)`:"okänd"}</dd><dt>Kurs</dt><dd>${s.cog!=null?Math.round(s.cog)+"°":"okänd"}</dd>
-    <dt>Destination</dt><dd>${dst?esc(dst)+(dst.toUpperCase()!==s.dest.trim().toUpperCase()?` <span style="font-weight:500;color:var(--muted)">(${esc(s.dest.trim())})</span>`:""):"inte angiven"}</dd><dt>Senaste position</dt><dd>för ${ag} sedan</dd><dt>MMSI</dt><dd>${s.id}</dd></dl>
+    ${bm?"":`<dt>Destination</dt>`}${bm?"":`<dd>${dst?esc(dst)+(dst.toUpperCase()!==s.dest.trim().toUpperCase()?` <span style="font-weight:500;color:var(--muted)">(${esc(s.dest.trim())})</span>`:""):"inte angiven"}</dd>`}<dt>Senaste position</dt><dd>för ${ag} sedan</dd><dt>MMSI</dt><dd>${s.id}</dd></dl>
     <p class="note">Fartyget visas ungefär en halv minut i efterhand, längs de positioner det rapporterat. Får inte användas för navigering.</p>`;$("sheet").classList.add("open")}
 async function aisPoll(){if(!S.layers.ais||document.hidden)return;const u=aisUrl();if(!u)return;
   let r;try{r=await fetch(u,{cache:"no-store"})}catch(_){toast("Fartygen kunde inte hämtas: ingen kontakt med "+u.replace(/^https?:\/\//,""));return}
@@ -280,7 +317,7 @@ async function aisPoll(){if(!S.layers.ais||document.hidden)return;const u=aisUrl
   aisData={t0:j.t,loc:Date.now(),ships:j.ships||[]};aisDraw();if(j.err)console.warn("AIS:",j.err)}
 function aisAsk(){const v=window.prompt("Adress till AIS-mellanstationen (till exempel https://ais.dittnamn.workers.dev). Töm fältet för att ta bort:",aisUrl());
   if(v===null)return null;const u=fixUrl(v);try{if(u)localStorage.setItem("aisUrl",u);else localStorage.removeItem("aisUrl")}catch(_){}return u}
-function aisStart(){aisStop(true);if(!aisUrl()&&!aisAsk()){S.layers.ais=false;$("aischip").setAttribute("aria-pressed","false");return}
+function aisStart(){aisStop(true);if(!aisUrl()&&!aisAsk()){S.layers.ais=false;$("aischip").setAttribute("aria-pressed","false");return}btLoad();
   aisPoll();aisT=setInterval(aisPoll,15000);aisA=setInterval(aisDraw,1000)}
 function aisStop(keep){clearInterval(aisT);clearInterval(aisA);aisT=aisA=null;if(!keep){aisLayer.clearLayers();aisMk.clear();aisTrk.clearLayers();aisTr.clear()}}
 map.on("zoomend moveend",()=>{if(S.layers.ais)aisDraw()});
